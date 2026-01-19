@@ -1,9 +1,5 @@
 // withdraw_routes.js (Postgres)
-// Implements:
-// - POST /api/withdraw/request
-// - GET  /api/admin/withdraw/list
-// - POST /api/admin/withdraw/approve
-// - POST /api/admin/withdraw/reject
+// payout.js expects: sendTon({ toAddress, amountNano, comment })
 
 import { pool, ensureUser, addLedger } from './db.js';
 import { sendTon } from './payout.js';
@@ -54,7 +50,7 @@ function genWithdrawId() {
 
 export function registerWithdrawRoutes(app) {
   const MIN_WITHDRAW_TON = Number(process.env.MIN_WITHDRAW_TON || '0.1');
-  const AUTO_PAYOUT_MAX_TON = Number(process.env.AUTO_PAYOUT_MAX_TON || '3');
+  const AUTO_PAYOUT_MAX_TON = Number(process.env.AUTO_PAYOUT_MAX_TON || '0'); // ты поставил 0
   const DISABLE_PAYOUTS = (process.env.DISABLE_PAYOUTS || '') === '1';
 
   // USER: request withdraw
@@ -63,12 +59,14 @@ export function registerWithdrawRoutes(app) {
       const s = await getSession(req);
       if (!s) throw new Error('no session');
 
-      const to = (req.body?.to || req.body?.to_address || '').toString().trim();
-      if (!to) throw new Error('to required');
+      const toAddress = (req.body?.to || req.body?.to_address || '').toString().trim();
+      if (!toAddress) throw new Error('to required');
 
       const amountTon = Number(req.body?.amountTon ?? req.body?.amount_ton);
       if (!Number.isFinite(amountTon) || amountTon <= 0) throw new Error('bad amount');
-      if (amountTon < MIN_WITHDRAW_TON) throw new Error(`Минимальный вывод: ${MIN_WITHDRAW_TON} TON`);
+      if (amountTon < MIN_WITHDRAW_TON) {
+        throw new Error(`Минимальный вывод: ${MIN_WITHDRAW_TON} TON`);
+      }
 
       const amountNano = tonToNanoBig(amountTon);
 
@@ -89,13 +87,12 @@ export function registerWithdrawRoutes(app) {
         const bal = BigInt(balR.rows[0].bal);
         if (bal < amountNano) throw new Error('Недостаточно средств');
 
-        // if small — try auto payout, otherwise pending
         const status = amountTon <= AUTO_PAYOUT_MAX_TON ? 'processing' : 'pending';
 
         await client.query(
           `INSERT INTO withdrawals(id,address,to_address,amount_nano,status,created_at)
            VALUES ($1,$2,$3,$4,$5,$6)`,
-          [id, s.address, to, amountNano.toString(), status, now]
+          [id, s.address, toAddress, amountNano.toString(), status, now]
         );
 
         // hold funds
@@ -113,7 +110,7 @@ export function registerWithdrawRoutes(app) {
         client.release();
       }
 
-      // AUTO PAYOUT path
+      // AUTO PAYOUT path (у тебя сейчас отключено AUTO_PAYOUT_MAX_TON=0)
       if (amountTon <= AUTO_PAYOUT_MAX_TON) {
         if (DISABLE_PAYOUTS) {
           await pool.query(
@@ -124,11 +121,15 @@ export function registerWithdrawRoutes(app) {
         }
 
         try {
-          const tx = await sendTon({ to, amountTon });
+          const tx = await sendTon({
+            toAddress,
+            amountNano: amountNano.toString(),
+            comment: `withdraw:${id}`,
+          });
 
           await pool.query(
             `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
-            [Date.now(), `tx=${tx}`, id]
+            [Date.now(), `tx=${JSON.stringify(tx)}`, id]
           );
           return res.json({ ok: true, id, status: 'paid', tx });
         } catch (e) {
@@ -144,7 +145,7 @@ export function registerWithdrawRoutes(app) {
         }
       }
 
-      // LARGE payout -> pending
+      // normal pending payout
       res.json({ ok: true, id, status: 'pending' });
     } catch (e) {
       res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
@@ -188,16 +189,40 @@ export function registerWithdrawRoutes(app) {
         return res.json({ ok: true, id, status: w.status, note: 'dry-run' });
       }
 
-      // send real TON
-      const amountTon = Number(BigInt(w.amount_nano)) / 1e9;
-      const tx = await sendTon({ to: w.to_address, amountTon });
+      // mark as processing to avoid double-approve
+      await pool.query(`UPDATE withdrawals SET status='processing' WHERE id=$1`, [id]);
 
-      await pool.query(
-        `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
-        [Date.now(), `tx=${tx}`, id]
-      );
+      try {
+        const tx = await sendTon({
+          toAddress: w.to_address,
+          amountNano: BigInt(w.amount_nano).toString(),
+          comment: `withdraw:${id}`,
+        });
 
-      res.json({ ok: true, id, status: 'paid', tx, amount_ton: amountTon });
+        await pool.query(
+          `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
+          [Date.now(), `tx=${JSON.stringify(tx)}`, id]
+        );
+
+        res.json({
+          ok: true,
+          id,
+          status: 'paid',
+          tx,
+          amount_nano: BigInt(w.amount_nano).toString(),
+          to_address: w.to_address,
+        });
+      } catch (e) {
+        // restore funds on failure
+        await addLedger(w.address, BigInt(w.amount_nano), 'withdraw_release', id);
+
+        await pool.query(
+          `UPDATE withdrawals SET status='failed', decided_at=$1, note=$2 WHERE id=$3`,
+          [Date.now(), `error=${e.message || String(e)}`, id]
+        );
+
+        res.status(500).json({ ok: false, id, status: 'failed', error: e.message || String(e) });
+      }
     } catch (e) {
       res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
     }
