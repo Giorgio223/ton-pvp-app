@@ -1,5 +1,5 @@
 // server.js (ESM) — TON PVP + Block Puzzle backend (FULL)
-// SQLite (prod now) + Postgres (migration ready)
+// + Postgres health + apply schema + migrate from SQLite
 
 import dotenv from 'dotenv';
 import express from 'express';
@@ -12,26 +12,30 @@ import { Pool } from 'pg';
 
 import { db, initDb, ensureUser, getBalanceNano, addLedger } from './db.js';
 import { registerWithdrawRoutes } from './withdraw_routes.js';
+import { migrateSqliteToPg } from './pg_migrate_from_sqlite.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load env
+// Грузим .env из папки проекта
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-const PORT = Number(process.env.PORT || '3000');
+const PORT = Number(process.env.PORT || '8787');
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS || '').trim();
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 const MIN_WITHDRAW_TON = Number(process.env.MIN_WITHDRAW_TON || '0.1');
 
+// Ставка игры (Block Puzzle). В index.html по умолчанию 0.5
 const GAME_ENTRY_TON = Number(process.env.GAME_ENTRY_TON || '0.5');
 
+// === ТЕСТ-ПОРОГИ: 1000/2000/3000 ===
 const TETRIS_T1 = Number(process.env.TETRIS_T1 || '1000');
 const TETRIS_T2 = Number(process.env.TETRIS_T2 || '2000');
 const TETRIS_T3 = Number(process.env.TETRIS_T3 || '3000');
 
+// Награды (мультипликатор к ставке). По умолчанию: 1x/2x/3x
 const TETRIS_M1 = Number(process.env.TETRIS_M1 || '1');
 const TETRIS_M2 = Number(process.env.TETRIS_M2 || '2');
 const TETRIS_M3 = Number(process.env.TETRIS_M3 || '3');
@@ -41,22 +45,23 @@ if (!TREASURY_ADDRESS) {
   process.exit(1);
 }
 
-// ---------- SQLITE INIT ----------
 initDb();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// ---------- STATIC ----------
+// ---- Static ----
 app.use('/', express.static(path.join(__dirname, 'public')));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// ---------- HELPERS ----------
+// ---- Helpers ----
 function tonToNanoBig(ton) {
   const s = String(ton);
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error('Bad TON amount');
   const [a, b = ''] = s.split('.');
-  return BigInt(a) * 1000000000n + BigInt((b + '000000000').slice(0, 9));
+  const frac = (b + '000000000').slice(0, 9);
+  return BigInt(a) * 1000000000n + BigInt(frac);
 }
 
 function nanoToTonStr(nano) {
@@ -86,12 +91,28 @@ function jsonError(res, e) {
   res.status(status).json({ ok: false, error: e.message || String(e) });
 }
 
+// ---- Sessions ----
+app.post('/api/session', (req, res) => {
+  try {
+    const { address } = req.body || {};
+    if (!address) throw new Error('address required');
+
+    ensureUser(address);
+
+    const token = genId('s_');
+    const now = Date.now();
+
+    db.prepare('INSERT INTO sessions(token,address,created_at,last_seen) VALUES (?,?,?,?)')
+      .run(token, address, now, now);
+
+    res.json({ ok: true, token, address });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
 function getSession(req) {
-  const token =
-    (req.query.token ||
-      req.headers['x-session-token'] ||
-      (req.body && req.body.token) ||
-      '').toString();
+  const token = (req.query.token || req.headers['x-session-token'] || (req.body && req.body.token) || '').toString();
   if (!token) return null;
   const s = db.prepare('SELECT token,address FROM sessions WHERE token=?').get(token);
   if (!s) return null;
@@ -99,74 +120,237 @@ function getSession(req) {
   return s;
 }
 
-// ---------- API ----------
-
-// session
-app.post('/api/session', (req, res) => {
-  try {
-    const { address } = req.body || {};
-    if (!address) throw new Error('address required');
-    ensureUser(address);
-    const token = genId('s_');
-    db.prepare(
-      'INSERT INTO sessions(token,address,created_at,last_seen) VALUES (?,?,?,?)'
-    ).run(token, address, Date.now(), Date.now());
-    res.json({ ok: true, token, address });
-  } catch (e) {
-    jsonError(res, e);
-  }
-});
-
-// me
+// ---- Me / Balance ----
 app.get('/api/me', (req, res) => {
   try {
     const s = getSession(req);
     if (!s) throw new Error('no session');
-    const bal = getBalanceNano(s.address);
+
+    const balNano = getBalanceNano(s.address);
     res.json({
       ok: true,
       address: s.address,
-      balance_nano: bal.toString(),
-      balance_ton: nanoToTonStr(bal),
+      balanceNano: balNano.toString(),
+      balanceTon: nanoToTonStr(balNano),
+      balance_nano: balNano.toString(),
+      balance_ton: nanoToTonStr(balNano),
     });
   } catch (e) {
     jsonError(res, e);
   }
 });
 
-// deposit
+// ---- Deposits ----
 app.post('/api/deposit/create', (req, res) => {
   try {
     const s = getSession(req);
     if (!s) throw new Error('no session');
 
-    const amt = Number(req.body.amountTon ?? req.body.amount_ton);
-    if (!amt || amt < MIN_DEPOSIT_TON) throw new Error('bad amount');
+    const { amountTon, amount_ton } = req.body || {};
+    const amountTonAny = amountTon ?? amount_ton;
+    const amtTonNum = Number(amountTonAny);
+    if (!Number.isFinite(amtTonNum) || amtTonNum <= 0) throw new Error('bad amount');
+    if (amtTonNum < MIN_DEPOSIT_TON) throw new Error(`Минимальный депозит: ${MIN_DEPOSIT_TON} TON`);
 
-    const baseNano = tonToNanoBig(amt);
-    const dust = BigInt(1 + Math.floor(Math.random() * 9999));
-    const nano = baseNano + dust;
+    const baseNano = tonToNanoBig(amountTonAny);
+    const dust = BigInt(1 + crypto.randomInt(9999)); // уникализация суммы
+    const amountNano = baseNano + dust;
 
     const id = genId('d_');
     const comment = genId('c_');
+    const now = Date.now();
 
     db.prepare(
-      'INSERT INTO deposits(id,address,amount_nano,comment,status,created_at) VALUES (?,?,?,?,?,?)'
-    ).run(id, s.address, Number(nano), comment, 'pending', Date.now());
+      "INSERT INTO deposits(id,address,amount_nano,comment,status,created_at) VALUES (?,?,?,?,?,?)"
+    ).run(id, s.address, Number(amountNano), comment, 'pending', now);
 
+    const amountTonStr = nanoToTonStr(amountNano);
     res.json({
       ok: true,
       to: TREASURY_ADDRESS,
-      amount_nano: nano.toString(),
-      amount_ton: nanoToTonStr(nano),
-      comment,
+      amount_nano: amountNano.toString(),
+      amount_ton: amountTonStr,
+      validUntil: Math.floor(Date.now() / 1000) + 600,
+      note: `Комментарий: ${comment}`,
+      deposit: { id, status: 'pending', amountNano: amountNano.toString(), amountTon: amountTonStr, comment },
+      pay: { to: TREASURY_ADDRESS, amountNano: amountNano.toString(), amountTon: amountTonStr, comment }
     });
   } catch (e) {
     jsonError(res, e);
   }
 });
 
-// ---------- POSTGRES HEALTH ----------
+app.get('/api/deposit/mine', (req, res) => {
+  try {
+    const s = getSession(req);
+    if (!s) throw new Error('no session');
+
+    const rows = db.prepare(
+      "SELECT id, amount_nano, comment, status, tx_hash, created_at, confirmed_at FROM deposits WHERE address=? ORDER BY created_at DESC LIMIT 50"
+    ).all(s.address);
+
+    res.json({
+      ok: true,
+      deposits: rows.map(r => ({
+        ...r,
+        amount_ton: nanoToTonStr(r.amount_nano),
+      }))
+    });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+// ---- Spend / Refund ----
+app.post('/api/spend', (req, res) => {
+  try {
+    const s = getSession(req);
+    if (!s) throw new Error('no session');
+
+    const { amount_ton, amountTon, reason } = req.body || {};
+    const amtAny = amountTon ?? amount_ton;
+    const amtNum = Number(amtAny);
+    if (!Number.isFinite(amtNum) || amtNum <= 0) throw new Error('bad amount');
+
+    const amountNano = tonToNanoBig(amtAny);
+    const bal = getBalanceNano(s.address);
+    if (bal < amountNano) throw new Error('Недостаточно средств');
+
+    const why = (reason || 'spend').toString();
+
+    addLedger(s.address, -amountNano, why, null);
+
+    if (why === 'game_start') {
+      const gameRunId = genId('g_');
+      db.prepare(
+        "INSERT INTO game_runs(id,address,bet_nano,status,started_at) VALUES (?,?,?,?,?)"
+      ).run(gameRunId, s.address, Number(amountNano), 'started', Date.now());
+
+      res.json({
+        ok: true,
+        spent_ton: amtNum,
+        spent_nano: amountNano.toString(),
+        game_run_id: gameRunId
+      });
+      return;
+    }
+
+    res.json({ ok: true, spent_ton: amtNum, spent_nano: amountNano.toString() });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+app.post('/api/refund', (req, res) => {
+  try {
+    const s = getSession(req);
+    if (!s) throw new Error('no session');
+
+    const { amount_ton, amountTon, reason } = req.body || {};
+    const amtAny = amountTon ?? amount_ton;
+    const amtNum = Number(amtAny);
+    if (!Number.isFinite(amtNum) || amtNum <= 0) throw new Error('bad amount');
+
+    const amountNano = tonToNanoBig(amtAny);
+    addLedger(s.address, amountNano, (reason || 'refund').toString(), null);
+
+    res.json({ ok: true, refund_ton: amtNum, refund_nano: amountNano.toString() });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+// ---- Game finish ----
+app.post('/api/game/finish', (req, res) => {
+  try {
+    const s = getSession(req);
+    if (!s) throw new Error('no session');
+
+    const { game_run_id, score } = req.body || {};
+    if (!game_run_id) throw new Error('game_run_id required');
+
+    const sc = Number(score);
+    if (!Number.isFinite(sc) || sc < 0) throw new Error('bad score');
+
+    const run = db.prepare("SELECT * FROM game_runs WHERE id=?").get(game_run_id);
+    if (!run) throw new Error('game_run_not_found');
+    if (run.address !== s.address) throw new Error('not_your_game');
+
+    if (run.status === 'finished') {
+      const mult = run.reward_nano && run.bet_nano ? Number(BigInt(run.reward_nano) / BigInt(run.bet_nano)) : 0;
+      res.json({
+        ok: true,
+        multiplier: mult || 0,
+        reward_ton: run.reward_nano ? Number(nanoToTonStr(run.reward_nano)) : 0,
+        reward_nano: String(run.reward_nano || 0),
+        score: run.score ?? sc
+      });
+      return;
+    }
+
+    let multiplier = 0;
+    if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
+    else if (sc >= TETRIS_T2) multiplier = TETRIS_M2;
+    else if (sc >= TETRIS_T1) multiplier = TETRIS_M1;
+    else multiplier = 0;
+
+    const betNano = BigInt(run.bet_nano);
+    const rewardNano = multiplier > 0 ? betNano * BigInt(multiplier) : 0n;
+
+    db.prepare("UPDATE game_runs SET status='finished', finished_at=?, score=?, reward_nano=? WHERE id=?")
+      .run(Date.now(), sc, Number(rewardNano), game_run_id);
+
+    if (rewardNano > 0n) {
+      addLedger(s.address, rewardNano, 'tetris_reward', game_run_id);
+    }
+
+    res.json({
+      ok: true,
+      multiplier,
+      reward_ton: rewardNano > 0n ? Number(nanoToTonStr(rewardNano)) : 0,
+      reward_nano: rewardNano.toString(),
+      score: sc
+    });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+// ---- Withdrawals mine ----
+app.get('/api/withdraw/mine', (req, res) => {
+  try {
+    const s = getSession(req);
+    if (!s) throw new Error('no session');
+    const rows = db.prepare(
+      "SELECT id, amount_nano, to_address, status, created_at, decided_at, note FROM withdrawals WHERE address=? ORDER BY created_at DESC LIMIT 50"
+    ).all(s.address);
+    res.json({ ok: true, withdrawals: rows });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+// ---- Admin: manual credit ----
+app.post('/api/admin/credit', (req, res) => {
+  try {
+    mustAdmin(req);
+    const { address, amountTon, note } = req.body || {};
+    if (!address) throw new Error('address required');
+
+    const amt = Number(amountTon);
+    if (!Number.isFinite(amt) || amt <= 0) throw new Error('bad amountTon');
+
+    const nano = tonToNanoBig(amt);
+    ensureUser(address);
+    addLedger(address, nano, 'admin_credit', note || 'manual admin credit');
+
+    res.json({ ok: true, address, added_ton: amt, added_nano: nano.toString() });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+// ---- Postgres health ----
 app.get('/api/pg/health', async (_req, res) => {
   try {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing');
@@ -175,11 +359,11 @@ app.get('/api/pg/health', async (_req, res) => {
     await pool.end();
     res.json({ ok: true, postgres: true, now: r.rows[0].now });
   } catch (e) {
-    res.status(500).json({ ok: false, postgres: false, error: e.message });
+    res.status(500).json({ ok: false, postgres: false, error: e.message || String(e) });
   }
 });
 
-// ---------- APPLY PG SCHEMA (ADMIN) ----------
+// ---- Apply PG schema (ADMIN) ----
 app.post('/api/admin/pg/apply-schema', async (req, res) => {
   try {
     mustAdmin(req);
@@ -192,26 +376,37 @@ app.post('/api/admin/pg/apply-schema', async (req, res) => {
 
     res.json({ ok: true, applied: true });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
-// withdraws
+// ---- Migrate SQLite -> Postgres (ADMIN) ----
+app.post('/api/admin/pg/migrate-from-sqlite', async (req, res) => {
+  try {
+    mustAdmin(req);
+    const r = await migrateSqliteToPg();
+    res.json({ ok: true, migrated: true, result: r });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+// ---- Withdraw routes ----
 registerWithdrawRoutes(app);
 
-// health
+// ---- Health ----
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-// ---------- START ----------
 app.listen(PORT, () => {
   console.log(`SERVER OK http://localhost:${PORT}`);
   console.log(`[server] treasury: ${TREASURY_ADDRESS}`);
+  console.log(`[server] GAME_ENTRY_TON=${GAME_ENTRY_TON} thresholds: ${TETRIS_T1}/${TETRIS_T2}/${TETRIS_T3}`);
 });
 
-// ---------- POLLER ----------
+// --- Run poller inside the same service ---
 if (process.env.RUN_POLLER === '1') {
   console.log('[server] Starting poller in background (RUN_POLLER=1)...');
   import('./poller.js')
-    .then(() => console.log('[server] Poller started'))
-    .catch((e) => console.error('[server] Poller failed', e));
+    .then(() => console.log('[server] Poller module loaded'))
+    .catch((e) => console.error('[server] Failed to start poller:', e));
 }
