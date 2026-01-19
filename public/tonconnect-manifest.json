@@ -1,5 +1,7 @@
 {
-  "url": "https://ton-pvp-web.onrender.com",
-  "name": "TON PVP Game",
-  "iconUrl": "https://ton-pvp-web.onrender.com/icon.png"
+  "url": "https://icefishing.business",
+  "name": "TON PVP",
+  "iconUrl": "https://icefishing.business/icon.png",
+  "termsOfUseUrl": "https://icefishing.business",
+  "privacyPolicyUrl": "https://icefishing.business"
 }
