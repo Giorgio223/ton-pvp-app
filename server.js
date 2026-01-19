@@ -1,11 +1,12 @@
 // server.js (ESM) — TON PVP + Block Puzzle backend (FULL)
-// + Postgres health check (/api/pg/health)
+// SQLite (prod now) + Postgres (migration ready)
 
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Pool } from 'pg';
 
@@ -40,17 +41,18 @@ if (!TREASURY_ADDRESS) {
   process.exit(1);
 }
 
+// ---------- SQLITE INIT ----------
 initDb();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Static
+// ---------- STATIC ----------
 app.use('/', express.static(path.join(__dirname, 'public')));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
-// Helpers
+// ---------- HELPERS ----------
 function tonToNanoBig(ton) {
   const s = String(ton);
   const [a, b = ''] = s.split('.');
@@ -97,8 +99,9 @@ function getSession(req) {
   return s;
 }
 
-/* -------- API -------- */
+// ---------- API ----------
 
+// session
 app.post('/api/session', (req, res) => {
   try {
     const { address } = req.body || {};
@@ -114,22 +117,24 @@ app.post('/api/session', (req, res) => {
   }
 });
 
+// me
 app.get('/api/me', (req, res) => {
   try {
     const s = getSession(req);
     if (!s) throw new Error('no session');
-    const balNano = getBalanceNano(s.address);
+    const bal = getBalanceNano(s.address);
     res.json({
       ok: true,
       address: s.address,
-      balance_nano: balNano.toString(),
-      balance_ton: nanoToTonStr(balNano),
+      balance_nano: bal.toString(),
+      balance_ton: nanoToTonStr(bal),
     });
   } catch (e) {
     jsonError(res, e);
   }
 });
 
+// deposit
 app.post('/api/deposit/create', (req, res) => {
   try {
     const s = getSession(req);
@@ -161,7 +166,7 @@ app.post('/api/deposit/create', (req, res) => {
   }
 });
 
-/* -------- POSTGRES HEALTH CHECK -------- */
+// ---------- POSTGRES HEALTH ----------
 app.get('/api/pg/health', async (_req, res) => {
   try {
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing');
@@ -174,19 +179,39 @@ app.get('/api/pg/health', async (_req, res) => {
   }
 });
 
+// ---------- APPLY PG SCHEMA (ADMIN) ----------
+app.post('/api/admin/pg/apply-schema', async (req, res) => {
+  try {
+    mustAdmin(req);
+    if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL missing');
+
+    const sql = fs.readFileSync(path.join(__dirname, 'pg_schema.sql'), 'utf8');
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    await pool.query(sql);
+    await pool.end();
+
+    res.json({ ok: true, applied: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// withdraws
 registerWithdrawRoutes(app);
 
+// health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// ---------- START ----------
 app.listen(PORT, () => {
   console.log(`SERVER OK http://localhost:${PORT}`);
   console.log(`[server] treasury: ${TREASURY_ADDRESS}`);
-  console.log(`[server] GAME_ENTRY_TON=${GAME_ENTRY_TON} thresholds: ${TETRIS_T1}/${TETRIS_T2}/${TETRIS_T3}`);
 });
 
+// ---------- POLLER ----------
 if (process.env.RUN_POLLER === '1') {
   console.log('[server] Starting poller in background (RUN_POLLER=1)...');
   import('./poller.js')
-    .then(() => console.log('[server] Poller module loaded'))
-    .catch((e) => console.error('[server] Failed to start poller:', e));
+    .then(() => console.log('[server] Poller started'))
+    .catch((e) => console.error('[server] Poller failed', e));
 }
