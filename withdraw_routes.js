@@ -50,7 +50,7 @@ function genWithdrawId() {
 
 export function registerWithdrawRoutes(app) {
   const MIN_WITHDRAW_TON = Number(process.env.MIN_WITHDRAW_TON || '0.1');
-  const AUTO_PAYOUT_MAX_TON = Number(process.env.AUTO_PAYOUT_MAX_TON || '0'); // ты поставил 0
+  const AUTO_PAYOUT_MAX_TON = Number(process.env.AUTO_PAYOUT_MAX_TON || '0'); // keep 0 for manual-only
   const DISABLE_PAYOUTS = (process.env.DISABLE_PAYOUTS || '') === '1';
 
   // USER: request withdraw
@@ -64,9 +64,7 @@ export function registerWithdrawRoutes(app) {
 
       const amountTon = Number(req.body?.amountTon ?? req.body?.amount_ton);
       if (!Number.isFinite(amountTon) || amountTon <= 0) throw new Error('bad amount');
-      if (amountTon < MIN_WITHDRAW_TON) {
-        throw new Error(`Минимальный вывод: ${MIN_WITHDRAW_TON} TON`);
-      }
+      if (amountTon < MIN_WITHDRAW_TON) throw new Error(`Минимальный вывод: ${MIN_WITHDRAW_TON} TON`);
 
       const amountNano = tonToNanoBig(amountTon);
 
@@ -75,7 +73,6 @@ export function registerWithdrawRoutes(app) {
       const id = genWithdrawId();
       const now = Date.now();
 
-      // balance check + hold atomically
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -95,7 +92,6 @@ export function registerWithdrawRoutes(app) {
           [id, s.address, toAddress, amountNano.toString(), status, now]
         );
 
-        // hold funds
         await client.query(
           `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
            VALUES ($1,$2,$3,$4,$5)`,
@@ -110,7 +106,7 @@ export function registerWithdrawRoutes(app) {
         client.release();
       }
 
-      // AUTO PAYOUT path (у тебя сейчас отключено AUTO_PAYOUT_MAX_TON=0)
+      // Auto payout path (only if AUTO_PAYOUT_MAX_TON > 0)
       if (amountTon <= AUTO_PAYOUT_MAX_TON) {
         if (DISABLE_PAYOUTS) {
           await pool.query(
@@ -131,9 +127,9 @@ export function registerWithdrawRoutes(app) {
             `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
             [Date.now(), `tx=${JSON.stringify(tx)}`, id]
           );
+
           return res.json({ ok: true, id, status: 'paid', tx });
         } catch (e) {
-          // release hold on failure
           await addLedger(s.address, amountNano, 'withdraw_release', id);
 
           await pool.query(
@@ -145,7 +141,6 @@ export function registerWithdrawRoutes(app) {
         }
       }
 
-      // normal pending payout
       res.json({ ok: true, id, status: 'pending' });
     } catch (e) {
       res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
@@ -170,61 +165,93 @@ export function registerWithdrawRoutes(app) {
     }
   });
 
-  // ADMIN: approve (send TON)
+  // ADMIN: approve (HARDENED against double-approve)
   app.post('/api/admin/withdraw/approve', async (req, res) => {
+    let w = null;
+
     try {
       mustAdmin(req);
 
       const id = (req.body?.id || '').toString().trim();
       if (!id) throw new Error('id required');
 
-      const rowR = await pool.query(`SELECT * FROM withdrawals WHERE id=$1`, [id]);
-      if (!rowR.rowCount) throw new Error('not found');
-
-      const w = rowR.rows[0];
-      if (w.status !== 'pending' && w.status !== 'processing') throw new Error('bad status');
-
       if (DISABLE_PAYOUTS) {
+        // keep old behavior in dry-run
         await pool.query(`UPDATE withdrawals SET note=$1 WHERE id=$2`, ['dry-run approve', id]);
-        return res.json({ ok: true, id, status: w.status, note: 'dry-run' });
+        return res.json({ ok: true, id, status: 'pending', note: 'dry-run' });
       }
 
-      // mark as processing to avoid double-approve
-      await pool.query(`UPDATE withdrawals SET status='processing' WHERE id=$1`, [id]);
-
+      // --- Transaction #1: lock row and move to "processing" exactly once ---
+      const client = await pool.connect();
       try {
-        const tx = await sendTon({
-          toAddress: w.to_address,
-          amountNano: BigInt(w.amount_nano).toString(),
-          comment: `withdraw:${id}`,
-        });
+        await client.query('BEGIN');
 
-        await pool.query(
-          `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
-          [Date.now(), `tx=${JSON.stringify(tx)}`, id]
+        const r = await client.query(
+          `SELECT * FROM withdrawals WHERE id=$1 FOR UPDATE`,
+          [id]
+        );
+        if (!r.rowCount) throw new Error('not found');
+
+        w = r.rows[0];
+
+        if (w.status !== 'pending') {
+          // if already processing/paid/failed/rejected — do not pay twice
+          throw new Error('bad status');
+        }
+
+        await client.query(
+          `UPDATE withdrawals SET status='processing' WHERE id=$1`,
+          [id]
         );
 
-        res.json({
-          ok: true,
-          id,
-          status: 'paid',
-          tx,
-          amount_nano: BigInt(w.amount_nano).toString(),
-          to_address: w.to_address,
-        });
+        await client.query('COMMIT');
       } catch (e) {
-        // restore funds on failure
-        await addLedger(w.address, BigInt(w.amount_nano), 'withdraw_release', id);
-
-        await pool.query(
-          `UPDATE withdrawals SET status='failed', decided_at=$1, note=$2 WHERE id=$3`,
-          [Date.now(), `error=${e.message || String(e)}`, id]
-        );
-
-        res.status(500).json({ ok: false, id, status: 'failed', error: e.message || String(e) });
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
       }
+
+      // --- Outside transaction: send TON ---
+      const amountNanoStr = BigInt(w.amount_nano).toString();
+      const tx = await sendTon({
+        toAddress: w.to_address,
+        amountNano: amountNanoStr,
+        comment: `withdraw:${id}`,
+      });
+
+      // --- Transaction #2: mark as paid ---
+      await pool.query(
+        `UPDATE withdrawals SET status='paid', decided_at=$1, note=$2 WHERE id=$3`,
+        [Date.now(), `tx=${JSON.stringify(tx)}`, id]
+      );
+
+      return res.json({
+        ok: true,
+        id,
+        status: 'paid',
+        tx,
+        amount_nano: amountNanoStr,
+        to_address: w.to_address,
+      });
     } catch (e) {
-      res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
+      // if we already moved to processing but payment failed, release funds + mark failed
+      const msg = e.message || String(e);
+
+      // "bad status" should not trigger releases
+      if (msg !== 'bad status' && msg !== 'not found' && w) {
+        try {
+          await addLedger(w.address, BigInt(w.amount_nano), 'withdraw_release', w.id);
+          await pool.query(
+            `UPDATE withdrawals SET status='failed', decided_at=$1, note=$2 WHERE id=$3`,
+            [Date.now(), `error=${msg}`, w.id]
+          );
+        } catch {
+          // ignore secondary failures
+        }
+      }
+
+      res.status(e.status || 400).json({ ok: false, error: msg });
     }
   });
 
@@ -240,9 +267,8 @@ export function registerWithdrawRoutes(app) {
       if (!rowR.rowCount) throw new Error('not found');
 
       const w = rowR.rows[0];
-      if (w.status !== 'pending' && w.status !== 'processing') throw new Error('bad status');
+      if (w.status !== 'pending') throw new Error('bad status');
 
-      // release hold
       await addLedger(w.address, BigInt(w.amount_nano), 'withdraw_reject_release', id);
 
       await pool.query(
