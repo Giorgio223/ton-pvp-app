@@ -1,16 +1,10 @@
 // poller.js (Postgres)
 // Confirms pending deposits by matching amount_nano against TonAPI transactions.
 
-import { pool, ensureUser, addLedger } from './db.js';
+import { pool } from './db.js';
 
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS || '').trim();
 const TONAPI_API_KEY = (process.env.TONAPI_API_KEY || '').trim();
-
-if (!TONAPI_API_KEY) {
-  console.log('[poller] TONAPI_API_KEY пустой — poller отключен');
-  // do NOT crash the web in PG mode
-  export default {};
-}
 
 const TONAPI_BASE = 'https://tonapi.io';
 
@@ -27,25 +21,19 @@ async function tonapiFetch(path) {
   return r.json();
 }
 
-// naive tx scan: last N txs, match by amount in nanotons
-async function scanIncomingTreasury(limit = 50) {
-  // TonAPI endpoint can vary; if your old poller used a different URL, swap it here.
-  // Common: /v2/blockchain/accounts/{address}/transactions
+async function scanIncomingTreasury(limit = 80) {
   const addr = encodeURIComponent(TREASURY_ADDRESS);
   const data = await tonapiFetch(`/v2/blockchain/accounts/${addr}/transactions?limit=${limit}`);
   return data?.transactions || data || [];
 }
 
 function extractIncomingNano(tx) {
-  // TonAPI objects differ; try several shapes:
-  // - tx.in_msg.value (string nano)
-  // - tx.in_msg.value in nanotons
-  // - tx.in_msg?.value
   const v =
     tx?.in_msg?.value ??
     tx?.in_msg?.amount ??
     tx?.in_msg?.value_nano ??
     null;
+
   if (v == null) return null;
   try {
     return BigInt(v);
@@ -60,7 +48,7 @@ function extractHash(tx) {
 
 async function tick() {
   const pending = await pool.query(
-    `SELECT id,address,amount_nano,comment
+    `SELECT id,address,amount_nano
      FROM deposits
      WHERE status='pending'
      ORDER BY created_at ASC
@@ -68,7 +56,6 @@ async function tick() {
   );
 
   console.log(`[poller] pending deposits: ${pending.rowCount}`);
-
   if (!pending.rowCount) return;
 
   const txs = await scanIncomingTreasury(80);
@@ -86,8 +73,10 @@ async function tick() {
     try {
       await client.query('BEGIN');
 
-      // re-check still pending
-      const cur = await client.query(`SELECT status FROM deposits WHERE id=$1 FOR UPDATE`, [d.id]);
+      const cur = await client.query(
+        `SELECT status FROM deposits WHERE id=$1 FOR UPDATE`,
+        [d.id]
+      );
       if (!cur.rowCount || cur.rows[0].status !== 'pending') {
         await client.query('ROLLBACK');
         continue;
@@ -100,7 +89,6 @@ async function tick() {
         [txHash, Date.now(), d.id]
       );
 
-      await ensureUser(d.address);
       await client.query(
         `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
          VALUES ($1,$2,$3,$4,$5)`,
@@ -109,9 +97,7 @@ async function tick() {
 
       await client.query('COMMIT');
 
-      console.log(
-        `[poller] CONFIRM deposit id=${d.id} user=${d.address} nano=${want.toString()} tx=${txHash}`
-      );
+      console.log(`[poller] CONFIRM deposit id=${d.id} user=${d.address} nano=${want.toString()} tx=${txHash}`);
       confirmed++;
     } catch (e) {
       await client.query('ROLLBACK');
@@ -124,12 +110,17 @@ async function tick() {
   console.log(`[poller] confirmed this tick: ${confirmed}`);
 }
 
-// loop
-(async function loop() {
+async function loop() {
   if (!TREASURY_ADDRESS) {
     console.log('[poller] TREASURY_ADDRESS missing — poller disabled');
     return;
   }
+  if (!TONAPI_API_KEY) {
+    console.log('[poller] TONAPI_API_KEY пустой — poller отключен (web не падает)');
+    return;
+  }
+
+  console.log('[poller] started');
   while (true) {
     try {
       await tick();
@@ -138,4 +129,6 @@ async function tick() {
     }
     await new Promise((r) => setTimeout(r, 10_000));
   }
-})();
+}
+
+loop();
