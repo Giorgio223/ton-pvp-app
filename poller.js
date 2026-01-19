@@ -1,157 +1,141 @@
-// poller.js (ESM) — автоподтверждение депозитов через TonAPI + зачисление в ledger
-//
-// Под твою БД (см. db.js):
-// deposits(id, address, amount_nano, comment, status, tx_hash, tx_lt, created_at, confirmed_at)
-// ledger(address, delta_nano, reason, ref, created_at)
-// Баланс = SUM(ledger.delta_nano)
-//
-// Запуск: node poller.js
-// ВАЖНО: проект ESM ("type":"module"), поэтому используем import.
+// poller.js (Postgres)
+// Confirms pending deposits by matching amount_nano against TonAPI transactions.
 
-// ВАЖНО: dotenv по умолчанию ищет .env в текущей рабочей папке (cwd).
-// Если poller запущен не из папки проекта, ключи TONAPI/адреса не подхватятся.
-// Поэтому грузим .env относительно этого файла.
-import dotenv from 'dotenv';
+import { pool, ensureUser, addLedger } from './db.js';
 
-import path from 'path';
-import { fileURLToPath } from 'url';
+const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS || '').trim();
+const TONAPI_API_KEY = (process.env.TONAPI_API_KEY || '').trim();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-dotenv.config({ path: path.join(__dirname, '.env') });
-
-import { db, ensureUser, addLedger } from './db.js';
-
-const TREASURY = (process.env.TREASURY_ADDRESS || '').trim();
-const TONAPI_KEY = (process.env.TONAPI_API_KEY || '').trim();
-
-if (!TREASURY) {
-  console.error('[poller] TREASURY_ADDRESS пустой в .env');
-  process.exit(1);
-}
-if (!TONAPI_KEY) {
-  console.error('[poller] TONAPI_API_KEY пустой в .env');
-  process.exit(1);
+if (!TONAPI_API_KEY) {
+  console.log('[poller] TONAPI_API_KEY пустой — poller отключен');
+  // do NOT crash the web in PG mode
+  export default {};
 }
 
-const POLL_INTERVAL_MS = 10_000;
-const TX_LIMIT = 200;
+const TONAPI_BASE = 'https://tonapi.io';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function tonapiGetTreasuryTxs(address, limit = 50) {
-  const url = `https://tonapi.io/v2/blockchain/accounts/${encodeURIComponent(address)}/transactions?limit=${limit}`;
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${TONAPI_KEY}` } });
+async function tonapiFetch(path) {
+  const r = await fetch(`${TONAPI_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${TONAPI_API_KEY}`,
+    },
+  });
   if (!r.ok) {
     const t = await r.text().catch(() => '');
-    throw new Error(`TonAPI ${r.status}: ${t}`);
+    throw new Error(`TonAPI ${r.status}: ${t.slice(0, 200)}`);
   }
-  return await r.json();
+  return r.json();
 }
 
-/**
- * Мы запрашиваем транзакции конкретно TREASURY-аккаунта,
- * поэтому НЕ проверяем destination (часто ломается из-за EQ/UQ/форматов).
- * Индексируем по amount_nano (строкой) -> {hash, lt}
- */
-function indexIncomingByAmount(tonapiJson) {
-  const txs = tonapiJson?.transactions || [];
-  const map = new Map();
+// naive tx scan: last N txs, match by amount in nanotons
+async function scanIncomingTreasury(limit = 50) {
+  // TonAPI endpoint can vary; if your old poller used a different URL, swap it here.
+  // Common: /v2/blockchain/accounts/{address}/transactions
+  const addr = encodeURIComponent(TREASURY_ADDRESS);
+  const data = await tonapiFetch(`/v2/blockchain/accounts/${addr}/transactions?limit=${limit}`);
+  return data?.transactions || data || [];
+}
 
-  for (const tx of txs) {
-    const inMsg = tx.in_msg;
-    if (!inMsg) continue;
-
-    const amountNano = String(inMsg.value ?? inMsg.amount ?? '');
-    if (!amountNano) continue;
-
-    const hash = tx.hash || tx.transaction_id?.hash || tx.id || '';
-    const lt = tx.lt || tx.transaction_id?.lt || '';
-
-    // Важно: если две транзы на одинаковую сумму — мы берём самую свежую (первую в списке TonAPI)
-    if (!map.has(amountNano)) {
-      map.set(amountNano, { hash, lt });
-    }
+function extractIncomingNano(tx) {
+  // TonAPI objects differ; try several shapes:
+  // - tx.in_msg.value (string nano)
+  // - tx.in_msg.value in nanotons
+  // - tx.in_msg?.value
+  const v =
+    tx?.in_msg?.value ??
+    tx?.in_msg?.amount ??
+    tx?.in_msg?.value_nano ??
+    null;
+  if (v == null) return null;
+  try {
+    return BigInt(v);
+  } catch {
+    return null;
   }
-
-  return map;
 }
 
-function getPendingDeposits() {
-  return db.prepare(
-    "SELECT id, address, amount_nano FROM deposits WHERE status='pending' ORDER BY created_at ASC LIMIT 200"
-  ).all();
-}
-
-function markDepositConfirmed(id, txHash, txLt) {
-  const now = Date.now();
-  db.prepare(
-    "UPDATE deposits SET status='confirmed', tx_hash=?, tx_lt=?, confirmed_at=? WHERE id=?"
-  ).run(txHash || null, txLt || null, now, id);
-}
-
-function alreadyLedgered(ref) {
-  const row = db.prepare("SELECT 1 AS ok FROM ledger WHERE ref = ? LIMIT 1").get(ref);
-  return !!row;
+function extractHash(tx) {
+  return tx?.hash || tx?.transaction_id?.hash || tx?.id || null;
 }
 
 async function tick() {
-  const pending = getPendingDeposits();
-  console.log(`[poller] pending deposits: ${pending.length}`);
-  if (!pending.length) return;
+  const pending = await pool.query(
+    `SELECT id,address,amount_nano,comment
+     FROM deposits
+     WHERE status='pending'
+     ORDER BY created_at ASC
+     LIMIT 50`
+  );
 
-  const txs = await tonapiGetTreasuryTxs(TREASURY, TX_LIMIT);
-  const idx = indexIncomingByAmount(txs);
+  console.log(`[poller] pending deposits: ${pending.rowCount}`);
+
+  if (!pending.rowCount) return;
+
+  const txs = await scanIncomingTreasury(80);
 
   let confirmed = 0;
 
-  for (const dep of pending) {
-    const amountNanoStr = String(dep.amount_nano);
-    const found = idx.get(amountNanoStr);
-    if (!found) continue;
+  for (const d of pending.rows) {
+    const want = BigInt(d.amount_nano);
+    const match = txs.find((tx) => extractIncomingNano(tx) === want);
+    if (!match) continue;
 
-    // Защита от повторного начисления
-    if (alreadyLedgered(dep.id)) {
-      // если ledger есть, но deposit почему-то всё ещё pending — поправим статус
-      markDepositConfirmed(dep.id, found.hash, found.lt);
-      continue;
+    const txHash = extractHash(match);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // re-check still pending
+      const cur = await client.query(`SELECT status FROM deposits WHERE id=$1 FOR UPDATE`, [d.id]);
+      if (!cur.rowCount || cur.rows[0].status !== 'pending') {
+        await client.query('ROLLBACK');
+        continue;
+      }
+
+      await client.query(
+        `UPDATE deposits
+         SET status='confirmed', tx_hash=$1, confirmed_at=$2
+         WHERE id=$3`,
+        [txHash, Date.now(), d.id]
+      );
+
+      await ensureUser(d.address);
+      await client.query(
+        `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [d.address, want.toString(), 'deposit', d.id, Date.now()]
+      );
+
+      await client.query('COMMIT');
+
+      console.log(
+        `[poller] CONFIRM deposit id=${d.id} user=${d.address} nano=${want.toString()} tx=${txHash}`
+      );
+      confirmed++;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      console.log('[poller] confirm failed:', e.message || String(e));
+    } finally {
+      client.release();
     }
-
-    console.log(
-      `[poller] CONFIRM deposit id=${dep.id} user=${dep.address} nano=${amountNanoStr} tx=${found.hash}`
-    );
-
-    // 1) подтвердить депозит
-    markDepositConfirmed(dep.id, found.hash, found.lt);
-
-    // 2) зачислить в ledger (ВАЖНО: delta_nano NOT NULL)
-    ensureUser(dep.address);
-    // addLedger(address, deltaNano, reason, ref)
-    addLedger(dep.address, BigInt(dep.amount_nano), 'deposit', dep.id);
-
-    confirmed++;
   }
 
   console.log(`[poller] confirmed this tick: ${confirmed}`);
 }
 
-async function main() {
-  console.log('[poller] starting...');
-  console.log('[poller] treasury:', TREASURY);
-  console.log('[poller] interval(ms):', POLL_INTERVAL_MS);
-
+// loop
+(async function loop() {
+  if (!TREASURY_ADDRESS) {
+    console.log('[poller] TREASURY_ADDRESS missing — poller disabled');
+    return;
+  }
   while (true) {
     try {
       await tick();
     } catch (e) {
-      console.log('[poller] ERROR:', e?.message || e);
+      console.log('[poller] tick error:', e.message || String(e));
     }
-    await sleep(POLL_INTERVAL_MS);
+    await new Promise((r) => setTimeout(r, 10_000));
   }
-}
-
-main().catch((e) => {
-  console.error('[poller] FATAL:', e);
-  process.exit(1);
-});
+})();

@@ -1,111 +1,83 @@
-import Database from 'better-sqlite3';
-import fs from 'fs';
+// db.js (Postgres-only)
+// DB_DRIVER=pg expected. Uses DATABASE_URL.
+// Exposes helper functions used by server.js / withdraw_routes.js / poller.js.
 
-const DB_PATH = process.env.DB_PATH || './db/app.sqlite';
-fs.mkdirSync('db', { recursive: true });
+import { Pool, types as pgTypes } from 'pg';
 
-export const db = new Database(DB_PATH);
+// Parse BIGINT (int8) as BigInt
+pgTypes.setTypeParser(20, (val) => BigInt(val));
 
-try {
-  db.pragma('journal_mode = WAL');
-} catch {
-  // ignore
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error('[db] DATABASE_URL missing');
+  process.exit(1);
 }
+
+export const pool = new Pool({
+  connectionString: DATABASE_URL,
+});
 
 export function initDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      address TEXT PRIMARY KEY,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
-      address TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      last_seen INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sessions_address ON sessions(address);
-
-    CREATE TABLE IF NOT EXISTS deposits (
-      id TEXT PRIMARY KEY,
-      address TEXT NOT NULL,
-      amount_nano INTEGER NOT NULL,
-      comment TEXT NOT NULL UNIQUE,
-      status TEXT NOT NULL,
-      tx_hash TEXT,
-      tx_lt TEXT,
-      created_at INTEGER NOT NULL,
-      confirmed_at INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_deposits_address ON deposits(address);
-
-    CREATE TABLE IF NOT EXISTS withdrawals (
-      id TEXT PRIMARY KEY,
-      address TEXT NOT NULL,
-      amount_nano INTEGER NOT NULL,
-      to_address TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      decided_at INTEGER,
-      note TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_withdrawals_address ON withdrawals(address);
-
-    CREATE TABLE IF NOT EXISTS ledger (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      address TEXT NOT NULL,
-      delta_nano INTEGER NOT NULL,
-      reason TEXT NOT NULL,
-      ref TEXT,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_ledger_address ON ledger(address);
-
-    -- Game runs (ставка 0.5 TON, начисление наград по score)
-    CREATE TABLE IF NOT EXISTS game_runs (
-      id TEXT PRIMARY KEY,
-      address TEXT NOT NULL,
-      bet_nano INTEGER NOT NULL,
-      status TEXT NOT NULL, -- started | finished
-      started_at INTEGER NOT NULL,
-      finished_at INTEGER,
-      score INTEGER,
-      reward_nano INTEGER
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_game_runs_address ON game_runs(address);
-  `);
+  // no-op: schema is applied via pg_schema.sql already
+  return true;
 }
 
-export function ensureUser(address) {
+export async function ensureUser(address) {
   const now = Date.now();
-  db.prepare('INSERT OR IGNORE INTO users(address, created_at) VALUES (?, ?)').run(address, now);
+  await pool.query(
+    `INSERT INTO users(address, created_at)
+     VALUES ($1, $2)
+     ON CONFLICT (address) DO NOTHING`,
+    [address, now]
+  );
 }
 
-export function getBalanceNano(address) {
-  const row = db.prepare('SELECT COALESCE(SUM(delta_nano), 0) AS bal FROM ledger WHERE address = ?').get(address);
-  return BigInt(row?.bal ?? 0);
-}
-
-export function addLedger(address, deltaNano, reason, ref = null) {
+export async function createSession(address) {
+  const token = `s_${cryptoRandHex(16)}`;
   const now = Date.now();
-  db.prepare('INSERT INTO ledger(address, delta_nano, reason, ref, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(address, int64(deltaNano), reason, ref, now);
+  await pool.query(
+    `INSERT INTO sessions(token, address, created_at, last_seen)
+     VALUES ($1, $2, $3, $4)`,
+    [token, address, now, now]
+  );
+  return token;
 }
 
-function int64(x) {
-  // better-sqlite3 stores JS numbers as double; keep safe range.
-  // For TON amounts we use nano: fits in 64-bit for typical ranges.
-  if (typeof x === 'bigint') {
-    const n = x;
-    if (n > 9007199254740991n || n < -9007199254740991n) {
-      throw new Error('Amount is too large for JS Number; adjust int handling');
-    }
-  }
-  return Number(x);
+export async function getSession(token) {
+  if (!token) return null;
+  const r = await pool.query(
+    `SELECT token, address FROM sessions WHERE token=$1`,
+    [token]
+  );
+  if (!r.rowCount) return null;
+  await pool.query(`UPDATE sessions SET last_seen=$1 WHERE token=$2`, [Date.now(), token]);
+  return r.rows[0];
+}
+
+export async function getBalanceNano(address) {
+  const r = await pool.query(
+    `SELECT COALESCE(SUM(delta_nano), 0)::bigint AS bal
+     FROM ledger WHERE address=$1`,
+    [address]
+  );
+  return BigInt(r.rows[0].bal);
+}
+
+export async function addLedger(address, deltaNano, reason, ref) {
+  const now = Date.now();
+  await pool.query(
+    `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [address, deltaNano.toString(), reason, ref ?? null, now]
+  );
+}
+
+// Helpers
+export function cryptoRandHex(nBytes) {
+  // Node built-in crypto (no import) in ESM: use dynamic import
+  // but for speed/compat, simple fallback:
+  const chars = 'abcdef0123456789';
+  let out = '';
+  for (let i = 0; i < nBytes * 2; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
 }
