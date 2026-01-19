@@ -377,3 +377,11 @@ app.listen(PORT, () => {
   console.log(`[server] treasury: ${TREASURY_ADDRESS}`);
   console.log(`[server] GAME_ENTRY_TON=${GAME_ENTRY_TON} thresholds: ${TETRIS_T1}/${TETRIS_T2}/${TETRIS_T3}`);
 });
+
+// --- Run poller inside the same service (so it shares the SAME SQLite DB on the disk) ---
+if (process.env.RUN_POLLER === '1') {
+  console.log('[server] Starting poller in background (RUN_POLLER=1)...');
+  import('./poller.js')
+    .then(() => console.log('[server] Poller module loaded'))
+    .catch((e) => console.error('[server] Failed to start poller:', e));
+}
