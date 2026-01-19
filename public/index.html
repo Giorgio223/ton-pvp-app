@@ -1,0 +1,2031 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Neon Block Puzzle 8×8</title>
+  <style>
+    :root{
+      --bg0:#070814;
+      --bg1:#090a1f;
+      --bg2:#0b1230;
+      --panel:#0b0f26;
+      --panel2:#0a0d20;
+      --glass:rgba(255,255,255,.06);
+      --gridA:rgba(255,255,255,.05);
+      --gridB:rgba(0,0,0,.18);
+      --neonCyan:#35f2ff;
+      --neonPink:#ff3df2;
+      --neonViolet:#9b5bff;
+      --txt:#eaf2ff;
+      --muted:rgba(234,242,255,.72);
+      --shadow:rgba(0,0,0,.55);
+    }
+    html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 25% 10%, rgba(255,61,242,.20), transparent 55%),
+                                           radial-gradient(900px 700px at 85% 35%, rgba(53,242,255,.18), transparent 55%),
+                                           radial-gradient(1200px 900px at 50% 90%, rgba(155,91,255,.16), transparent 60%),
+                                           linear-gradient(180deg, var(--bg0), var(--bg2));
+              font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; overflow:hidden;}
+    .wrap{height:100%;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;}
+    .ui{
+      position:relative;
+      width:min(620px, 96vw);
+      max-height:92vh;
+      aspect-ratio: 9/10;
+      border-radius:22px;
+    }
+    canvas{
+      width:100%;
+      height:100%;
+      display:block;
+      border-radius:22px;
+      background:
+        radial-gradient(900px 700px at 20% 15%, rgba(53,242,255,.08), transparent 60%),
+        radial-gradient(900px 700px at 85% 40%, rgba(255,61,242,.08), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.05), rgba(0,0,0,.10));
+      box-shadow: 0 30px 90px var(--shadow);
+      touch-action:none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .hud{
+      position:absolute; left:14px; right:14px; top:max(12px, env(safe-area-inset-top));
+      display:flex; align-items:center; justify-content:space-between;
+      pointer-events:none;
+      color:var(--txt);
+      text-shadow:0 10px 22px rgba(0,0,0,.55);
+      font-weight:900;
+      letter-spacing:.4px;
+    }
+    .pill{
+      pointer-events:auto;
+      display:flex; align-items:center; gap:10px;
+      padding:10px 12px;
+      border-radius:16px;
+      background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.10));
+      border:1px solid rgba(255,255,255,.10);
+      box-shadow:0 18px 45px rgba(0,0,0,.35), 0 0 0 1px rgba(53,242,255,.08) inset;
+      backdrop-filter: blur(6px);
+    }
+    .pill b{font-size:14px; opacity:.8}
+    .pill span{font-size:16px}
+    .btn{
+      pointer-events:auto;
+      border:0;
+      cursor:pointer;
+      user-select:none;
+      font-weight:950;
+      color:var(--txt);
+      padding:10px 12px;
+      border-radius:16px;
+      background:
+        radial-gradient(90% 140% at 20% 20%, rgba(53,242,255,.25), transparent 55%),
+        radial-gradient(90% 140% at 80% 30%, rgba(255,61,242,.25), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.12));
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow: 0 18px 45px rgba(0,0,0,.35),
+                  0 0 22px rgba(53,242,255,.20),
+                  0 0 22px rgba(255,61,242,.14);
+    }
+    .btn:active{transform:translateY(1px)}
+    .combo{
+      position:absolute;
+      left:50%;
+      top:43%;
+      transform:translate(-50%,-50%);
+      font-weight:1000;
+      font-size:66px;
+      letter-spacing:.2px;
+      opacity:0;
+      pointer-events:none;
+      user-select:none;
+      filter: drop-shadow(0 14px 18px rgba(0,0,0,.35));
+      white-space:nowrap;
+    }
+    .combo .word{
+      color:#ffffff;
+      -webkit-text-stroke: 10px rgba(53,242,255,.95);
+      paint-order: stroke fill;
+      text-shadow:
+        0 10px 18px rgba(0,0,0,.45),
+        0 0 28px rgba(53,242,255,.55);
+    }
+    .combo .num{
+      margin-left:12px;
+      color:#fff1a6;
+      -webkit-text-stroke: 10px rgba(255,61,242,.95);
+      paint-order: stroke fill;
+      text-shadow:
+        0 10px 18px rgba(0,0,0,.45),
+        0 0 30px rgba(255,61,242,.55);
+    }
+    .combo.show{animation: pop .70s cubic-bezier(.2,.9,.25,1) forwards;}
+    @keyframes pop{
+      0%{transform:translate(-50%,-50%) scale(.55);opacity:0}
+      25%{opacity:1}
+      55%{transform:translate(-50%,-50%) scale(1.12);opacity:1}
+      100%{transform:translate(-50%,-50%) scale(1);opacity:0}
+    }
+    .overlay{
+      position:absolute; inset:0;
+      display:none; align-items:center; justify-content:center;
+      background:rgba(0,0,0,.35);
+      border-radius:22px;
+      backdrop-filter: blur(4px);
+    }
+    .overlay.show{display:flex;}
+    .card{
+      width:min(380px, 88%);
+      border-radius:20px;
+      padding:16px;
+      color:var(--txt);
+      text-align:center;
+      background:
+        radial-gradient(90% 140% at 15% 20%, rgba(53,242,255,.18), transparent 55%),
+        radial-gradient(90% 140% at 80% 30%, rgba(255,61,242,.18), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.18));
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:0 30px 80px rgba(0,0,0,.5),
+                 0 0 0 1px rgba(53,242,255,.10) inset;
+    }
+    .card h1{margin:0 0 8px 0;font-size:24px;letter-spacing:.5px}
+    .card p{margin:8px 0;opacity:.9}
+    .row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:12px;}
+    .card button{
+      border:0; cursor:pointer; user-select:none;
+      padding:10px 14px; border-radius:16px;
+      font-weight:950; color:var(--txt);
+      background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.16));
+      border:1px solid rgba(255,255,255,.14);
+      box-shadow:0 18px 45px rgba(0,0,0,.35);
+    }
+    .card button.primary{
+      color:#071022;
+      background:
+        linear-gradient(180deg, rgba(53,242,255,.95), rgba(155,91,255,.85));
+      border:0;
+      box-shadow:0 20px 55px rgba(53,242,255,.25), 0 20px 55px rgba(155,91,255,.18);
+    }
+    .hint{
+      position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+      color:var(--muted);
+      font-size:12px;
+      font-weight:800;
+      text-shadow:0 10px 22px rgba(0,0,0,.55);
+      pointer-events:none;
+    }
+  .hudRight{
+  pointer-events:auto;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+/* TonConnect UI button styling overrides (keeps their structure but matches neon UI) */
+#ton-connect{
+  pointer-events:auto;
+}
+#ton-connect button,
+#ton-connect .tc-button,
+#ton-connect .ton-connect-button{
+  border:0;
+  cursor:pointer;
+  user-select:none;
+  font-weight:950;
+  color:var(--txt);
+  padding:10px 12px;
+  border-radius:16px;
+  background:
+    radial-gradient(90% 140% at 20% 20%, rgba(53,242,255,.22), transparent 55%),
+    radial-gradient(90% 140% at 80% 30%, rgba(255,61,242,.22), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.12));
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow: 0 18px 45px rgba(0,0,0,.35);
+  line-height:1;
+  white-space:nowrap;
+}
+#ton-connect button:active{transform:translateY(1px)}
+
+.tonFloat{
+  position:fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  right: calc(env(safe-area-inset-right, 0px) + 10px);
+  z-index: 9999;
+  pointer-events: auto;
+}
+/* If inside Telegram header overlaps, nudge down slightly on very small heights */
+@media (max-height: 700px){
+  .tonFloat{ top: calc(env(safe-area-inset-top, 0px) + 16px); }
+}
+
+.balanceFloat{
+  position:fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: calc(env(safe-area-inset-left, 0px) + 10px);
+  z-index: 9999;
+  pointer-events:auto;
+}
+.balanceBtn{
+  display:flex; align-items:center; gap:8px;
+  border:0; cursor:pointer; user-select:none;
+  padding:10px 12px;
+  border-radius:16px;
+  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(0,0,0,.10));
+  border:1px solid rgba(255,255,255,.10);
+  box-shadow:0 18px 45px rgba(0,0,0,.35), 0 0 0 1px rgba(53,242,255,.06) inset;
+  backdrop-filter: blur(6px);
+  color:var(--txt);
+  font-weight:950;
+  line-height:1;
+  white-space:nowrap;
+}
+.balanceBtn:active{transform:translateY(1px)}
+.balLabel{opacity:.85; font-size:13px}
+.balValue{font-size:14px}
+.balPlus{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:18px; height:18px;
+  border-radius:6px;
+  background: rgba(53,242,255,.22);
+  border:1px solid rgba(53,242,255,.35);
+  color:#dffcff;
+  font-weight:1000;
+  font-size:14px;
+  box-shadow: 0 0 14px rgba(53,242,255,.18);
+}
+
+.balOverlay{
+  position:fixed;
+  inset:0;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background:rgba(0,0,0,.38);
+  backdrop-filter: blur(6px);
+  z-index: 10000;
+  padding:16px;
+  box-sizing:border-box;
+}
+.balOverlay.show{display:flex;}
+.balModal{
+  width:min(420px, 92vw);
+  border-radius:20px;
+  padding:14px;
+  color:var(--txt);
+  background:
+    radial-gradient(90% 140% at 15% 20%, rgba(53,242,255,.16), transparent 55%),
+    radial-gradient(90% 140% at 80% 30%, rgba(255,61,242,.14), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.20));
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 30px 90px rgba(0,0,0,.55), 0 0 0 1px rgba(53,242,255,.08) inset;
+}
+.balHead{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;}
+.balTitle{font-weight:1000; font-size:18px; letter-spacing:.3px}
+.balClose{
+  border:0; cursor:pointer; user-select:none;
+  padding:8px 10px; border-radius:14px;
+  font-weight:950; color:var(--txt);
+  background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(0,0,0,.16));
+  border:1px solid rgba(255,255,255,.14);
+}
+.balTabs{display:flex; gap:8px; margin:8px 0 12px;}
+.balTab{
+  flex:1;
+  border:0; cursor:pointer; user-select:none;
+  padding:10px 10px; border-radius:14px;
+  font-weight:950; color:var(--txt);
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+}
+.balTab.active{
+  color:#071022;
+  background: linear-gradient(180deg, rgba(53,242,255,.95), rgba(155,91,255,.85));
+  border:0;
+  box-shadow:0 18px 45px rgba(53,242,255,.20), 0 18px 45px rgba(155,91,255,.14);
+}
+.balBody{padding:2px 2px 6px;}
+.balPane{display:none;}
+.balPane.show{display:block;}
+.balText{margin:6px 0 10px; opacity:.9}
+.balRow{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+.balField{display:flex; flex-direction:column; gap:6px; flex:1; min-width:160px;}
+.balField span{font-size:12px; opacity:.8; font-weight:900; letter-spacing:.2px}
+.balField input{
+  padding:10px 12px;
+  border-radius:14px;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(0,0,0,.20);
+  color:var(--txt);
+  outline:none;
+  font-weight:800;
+}
+.balPrimary{
+  width:100%;
+  border:0; cursor:pointer; user-select:none;
+  padding:11px 12px; border-radius:16px;
+  font-weight:1000;
+  color:#071022;
+  background: linear-gradient(180deg, rgba(53,242,255,.95), rgba(155,91,255,.85));
+  box-shadow:0 20px 55px rgba(53,242,255,.22), 0 20px 55px rgba(155,91,255,.16);
+}
+.balNote{margin:10px 0 0; font-size:12px; opacity:.75}
+
+  
+    .tonMenu{
+      position:absolute;
+      right:0;
+      top:44px;
+      background:rgba(10,14,26,.92);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:14px;
+      padding:10px;
+      min-width:200px;
+      box-shadow:0 18px 45px rgba(0,0,0,.45);
+      display:none;
+      z-index:50;
+      backdrop-filter: blur(10px);
+    }
+    .tonMenu.show{ display:block; }
+    .tonMenuBtn{
+      width:100%;
+      border:0;
+      border-radius:12px;
+      padding:10px 12px;
+      cursor:pointer;
+      background:rgba(255,255,255,.10);
+      color:#fff;
+      font-weight:700;
+    }
+    .tonMenuBtn:hover{ background:rgba(255,255,255,.16); }
+
+    /* Bet panel (appears where the figures/tray are before the game starts) */
+    .betPanel{
+      position:absolute;
+      left:50%;
+      transform:translateX(-50%);
+      bottom:18px;
+      width:min(520px, calc(100% - 28px));
+      background:rgba(10,14,26,.78);
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:20px;
+      padding:14px 14px 12px;
+      box-shadow:0 18px 55px rgba(0,0,0,.50);
+      backdrop-filter: blur(10px);
+      display:none;
+      z-index:25;
+    }
+    .betPanel.show{ display:block; }
+    .betRow{
+      display:flex;
+      gap:10px;
+      align-items:flex-end;
+      flex-wrap:wrap;
+    }
+    .betField{
+      flex:1 1 220px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .betField span{
+      font-size:12px;
+      color:#fff;
+      font-weight:900;
+      opacity:1;
+    }
+    .betField input{
+      height:42px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(255,255,255,.08);
+      color:#fff;
+      padding:0 12px;
+      outline:none;
+      font-size:14px;
+    }
+    .betStart{
+      flex:0 0 auto;
+      height:42px;
+      padding:0 16px;
+      border:0;
+      border-radius:14px;
+      cursor:pointer;
+      background:linear-gradient(135deg, rgba(85,107,255,.95), rgba(255,72,208,.92));
+      color:#fff;
+      font-weight:800;
+      letter-spacing:.2px;
+      box-shadow:0 10px 25px rgba(85,107,255,.20);
+    }
+    .betHint{
+      margin-top:8px;
+      font-size:12px;
+      opacity:.75;
+      line-height:1.25;
+    }
+
+  </style>
+
+</head>
+<body>
+<div class="wrap">
+  <div class="ui">
+    <div class="tonFloat" id="ton-float">
+      <button class="balanceBtn" id="btnTonConnect" type="button">Ton Connect Wallet</button>
+      <div id="ton-connect" style="display:none"></div>
+      <div class="tonMenu" id="tonMenu" aria-hidden="true">
+        <button class="tonMenuBtn" id="btnTonDisconnect" type="button">Отвязать кошелёк</button>
+      </div>
+    </div>
+    <div class="balanceFloat" id="balance-float">
+      <div class="hudRight">
+        <button class="balanceBtn" id="btnBalance" type="button">
+          <span class="balLabel">Баланс:</span>
+          <span class="balValue" id="balValue">0</span>
+          <span class="balPlus" aria-hidden="true">＋</span>
+        </button>
+        <button class="balanceBtn" id="btnPvp" type="button">Перейти в PVP режим</button>
+      </div>
+    </div>
+
+    <div class="hud">
+      <div class="pill">
+        <span><b>СЧЁТ</b> <span id="score">0</span></span>
+        
+      </div>
+      <button class="btn" id="btnNew">Новая</button>
+    </div>
+
+    <div class="combo" id="combo"><span class="word">Combo</span><span class="num" id="comboNum">2</span></div>
+
+    <canvas id="c" width="720" height="820" aria-label="Neon Block Puzzle"></canvas>
+
+
+    
+    <!-- Start Panel (фиксированная стоимость) -->
+    <div class="betPanel show" id="betPanel" aria-hidden="false">
+      <div class="betRow">
+        <div class="betField" style="flex:1 1 260px">
+          <span>Стоимость запуска</span>
+          <div style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">0.5 TON</div>
+        </div>
+        <button class="betStart" id="btnStartGame" type="button">Запустить игру</button>
+      </div>
+      <div class="betHint" id="betHint"></div>
+    </div>
+<!-- Balance Modal -->
+    <div class="balOverlay" id="balOverlay" aria-hidden="true">
+      <div class="balModal" role="dialog" aria-modal="true" aria-labelledby="balTitle">
+        <div class="balHead">
+          <div class="balTitle" id="balTitle">Баланс</div>
+          <button class="balClose" id="balClose" type="button" aria-label="Закрыть">Закрыть</button>
+        </div>
+
+        <div class="balTabs" role="tablist" aria-label="Операции">
+          <button class="balTab active" id="tabDeposit" type="button" role="tab" aria-selected="true">Депозит</button>
+          <button class="balTab" id="tabWithdraw" type="button" role="tab" aria-selected="false">Вывод</button>
+        </div>
+
+        <div class="balBody">
+          <div class="balPane show" id="paneDeposit" role="tabpanel" aria-labelledby="tabDeposit">
+            <p class="balText">Депозит (глобально): укажи сумму, нажми «Пополнить» — откроется TonConnect-транзакция. После оплаты пополнение подтвердится автоматически по блокчейну.</p>
+            <div class="balRow">
+              <label class="balField">
+                <span>Сумма</span>
+                <input id="depAmount" inputmode="decimal" placeholder="Напр. 10" />
+              </label>
+            </div>
+            <button class="balPrimary" id="btnDep" type="button">Пополнить</button>
+            <div id="depStatus" class="balNote" style="margin-top:10px"></div>
+            <div id="depHistory" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+
+            <p class="balNote">Если депозит не появился сразу — это нормально: подтверждение приходит после обработки транзакции в сети. История депозитов ниже.</p>
+          </div>
+
+          <div class="balPane" id="paneWithdraw" role="tabpanel" aria-labelledby="tabWithdraw">
+            <p class="balText">Вывод: создай заявку на вывод (глобально). Адрес получателя обязателен. Заявки видно в истории ниже.</p>
+            <div class="balRow">
+              <label class="balField">
+                <span>Адрес получателя (TON)</span>
+                <input id="wdAddress" placeholder="EQ..." />
+              </label>
+            </div>
+
+            <div class="balRow">
+              <label class="balField">
+                <span>Сумма</span>
+                <input id="wdAmount" inputmode="decimal" placeholder="Напр. 5" />
+              </label>
+            </div>
+            <button class="balPrimary" id="btnWd" type="button">Вывести</button>
+            <div id="wdStatus" class="balNote" style="margin-top:10px"></div>
+            <div id="wdHistory" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div>
+
+            <p class="balNote">Вывод пока без авто-отправки: создаётся заявка, а ты смотришь/обрабатываешь её в админ-панели. Статусы заявок ниже.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+
+    <!-- PVP Overlay (демо без сервера: синхронизация через localStorage между вкладками) -->
+    <div class="balOverlay" id="pvpOverlay" aria-hidden="true">
+      <div class="balModal" role="dialog" aria-modal="true" aria-labelledby="pvpTitle">
+        <div class="balHead">
+          <div class="balTitle" id="pvpTitle">PVP режим</div>
+          <button class="balClose" id="pvpClose" type="button" aria-label="Закрыть">Закрыть</button>
+        </div>
+
+        <div class="balTabs" role="tablist" aria-label="PVP">
+          <button class="balTab active" id="tabPvpRooms" type="button" role="tab" aria-selected="true">Комнаты</button>
+          <button class="balTab" id="tabPvpCreate" type="button" role="tab" aria-selected="false">Создать</button>
+        </div>
+
+        <div class="balBody">
+          <div class="balPane show" id="panePvpRooms" role="tabpanel" aria-labelledby="tabPvpRooms">
+            <p class="balText" style="margin-top:0">Зайди в комнату — и нажмите «Готово» с обеих сторон, чтобы начать игру.</p>
+            <div id="pvpRoomsList" style="display:flex;flex-direction:column;gap:10px"></div>
+            <p class="balNote" style="margin-top:10px">Примечание: это демо PVP без сервера. Для теста можно открыть сайт в двух вкладках на одном домене.</p>
+          </div>
+
+          <div class="balPane" id="panePvpCreate" role="tabpanel" aria-labelledby="tabPvpCreate">
+            <p class="balText" style="margin-top:0">Создай комнату на сумму TON (ставка будет списана с баланса сразу).</p>
+            <div class="balRow">
+              <label class="balField">
+                <span>Сумма (TON)</span>
+                <input id="pvpCreateAmount" inputmode="decimal" placeholder="Напр. 1" />
+              </label>
+            </div>
+            <button class="balPrimary" id="btnPvpCreate" type="button">Создать комнату</button>
+            <p class="balNote" id="pvpCreateHint" style="margin-top:10px"></p>
+          </div>
+
+          <div class="balPane" id="panePvpWait" role="tabpanel" aria-labelledby="pvpTitle">
+            <p class="balText" style="margin-top:0;font-weight:950">Ожидание соперника<span id="pvpDots">...</span></p>
+            <p class="balText" id="pvpWaitInfo" style="opacity:.9"></p>
+            <button class="balPrimary" id="btnPvpReady" type="button" style="display:none">Готово</button>
+            <p class="balNote" id="pvpReadyHint" style="margin-top:10px"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="overlay" id="over">
+      <div class="card">
+        <h1>Игра окончена</h1>
+        <p>Счёт: <b id="finalScore">0</b></p>
+        <p id="finalReward" style="opacity:.9"></p>
+        <p style="opacity:.85">Новых ходов нет.</p>
+        <div class="row">
+          <button class="primary" id="btnRestart">Заново</button>
+          <button id="btnClose">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/@tonconnect/ui@2.3.1/dist/tonconnect-ui.min.js"></script>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+// ===== TON Connect (wallet)
+// ВАЖНО: manifestUrl должен быть доступен по HTTPS и соответствовать домену, где размещён проект.
+// Если открыть файл напрямую (file://), TonConnect обычно зависает на загрузке.
+let tonConnectUI = null;
+let tonAddress = '';
+
+function shortAddr(a){
+  if(!a) return '';
+  return a.slice(0,4) + '…' + a.slice(-4);
+}
+
+function setTonBtn(text, disabled=false){
+  const b = document.getElementById('btnTonConnect');
+  if(!b) return;
+  b.textContent = text;
+  b.disabled = disabled;
+  b.style.opacity = disabled ? .7 : 1;
+}
+
+(function initTon(){
+  const canInit = (window.TON_CONNECT_UI && window.TON_CONNECT_UI.TonConnectUI);
+  if(!canInit){
+    setTonBtn('TonConnect не загрузился', true);
+    return;
+  }
+
+  if(location.protocol === 'file:'){
+    setTonBtn('Нужен HTTPS/хостинг', true);
+    console.warn('[TON] Открыто через file:// — размести проект на https (Vercel/Netlify) или запусти локальный сервер.');
+    return;
+  }
+
+  // по умолчанию ищем manifest рядом с приложением
+  const manifestUrl = 'https://lucas-perfect-throws-vcr.trycloudflare.com/tonconnect-manifest.json';
+
+  // ВАЖНО: если ты сменишь trycloudflare URL — обнови эту строку и поле "url" в public/tonconnect-manifest.json
+  tonConnectUI = new window.TON_CONNECT_UI.TonConnectUI({
+    manifestUrl,
+    buttonRootId: 'ton-connect' // рендерим скрытую кнопку, сами управляем кликом
+  });
+
+  // Быстрый фидбек, чтобы кнопка не "крутилась" бесконечно
+  setTonBtn('Ton Connect Wallet');
+
+  // Если восстановление соединения вдруг зависнет — не блокируем кнопку
+  Promise.race([
+    tonConnectUI.connectionRestored,
+    new Promise(res => setTimeout(res, 2500))
+  ]).finally(()=>{
+    // оставляем кнопку активной
+    if(!tonAddress) setTonBtn('Ton Connect Wallet');
+  });
+
+  // onStatusChange подключён ниже (там же создаём session и обновляем баланс/историю)
+
+  const tonMenu = document.getElementById('tonMenu');
+  const btnTonDisconnect = document.getElementById('btnTonDisconnect');
+
+  function closeTonMenu(){
+    tonMenu?.classList.remove('show');
+    tonMenu?.setAttribute('aria-hidden','true');
+  }
+  function openTonMenu(){
+    tonMenu?.classList.add('show');
+    tonMenu?.setAttribute('aria-hidden','false');
+  }
+
+  // Click on our custom button:
+  // - if wallet NOT connected -> open TonConnect modal
+  // - if wallet connected -> show "disconnect" option
+  document.getElementById('btnTonConnect')?.addEventListener('click', async ()=>{
+    if(!tonConnectUI) return;
+
+    if(tonAddress){
+      // already connected -> offer disconnect
+      if(tonMenu?.classList.contains('show')) closeTonMenu();
+      else openTonMenu();
+      return;
+    }
+
+    try{
+      await tonConnectUI.openModal();
+    }catch(err){
+      console.error('[TON] openModal error', err);
+      setTonBtn('Ошибка TonConnect');
+    }
+  });
+
+  // Disconnect
+  btnTonDisconnect?.addEventListener('click', async ()=>{
+    if(!tonConnectUI) return;
+    try{
+      await tonConnectUI.disconnect();
+    }catch(err){
+      console.error('[TON] disconnect error', err);
+    }finally{
+      tonAddress = '';
+      setTonBtn('Ton Connect Wallet');
+      closeTonMenu();
+    }
+  });
+
+  // Close menu on outside click
+  document.addEventListener('click', (e)=>{
+    if(!tonMenu) return;
+    const btn = document.getElementById('btnTonConnect');
+    if(tonMenu.contains(e.target) || btn?.contains(e.target)) return;
+    closeTonMenu();
+  });
+})();
+
+
+  // ===== Game config
+  let gameActive = false;
+  const betPanel = document.getElementById('betPanel');
+  const START_BET = 0.5;
+  const betHintEl = document.getElementById('betHint');
+  const btnStartGame = document.getElementById('btnStartGame');
+  let currentBet = 0;
+  let currentGameRunId = '';
+
+  const N = 8;
+
+  // Layout: keep HUD from overlapping the board (dynamic on mobile)
+const hudEl = document.querySelector('.hud');
+
+let W = canvas.width, H = canvas.height;
+
+let topPad = 86;     // will be recalculated based on HUD height
+const sidePad = 64;
+let gap = 16;
+const trayH = 240;
+
+// These will be (re)computed in layout()
+let cell = 0;
+const board = { x:0, y:0, n:N, cell:0, w:0, h:0 };
+const tray  = { x:0, y:0, w:0, h:trayH };
+
+function layout(){
+  W = canvas.width; H = canvas.height;
+
+  // Convert CSS px -> canvas units for Y
+  const r = canvas.getBoundingClientRect();
+  const yScale = r.height ? (canvas.height / r.height) : 1;
+
+  // HUD height in canvas units + some breathing room
+  const hudH = hudEl ? hudEl.getBoundingClientRect().height : 0;
+  topPad = Math.max(86, Math.round((hudH + 18) * yScale));
+
+  // Slightly tighten gap on very small screens
+  gap = (r.height && r.height < 620) ? 12 : 16;
+
+  const boardAreaH = H - topPad - trayH - gap;
+
+  cell = Math.floor(Math.min((W - sidePad*2)/N, boardAreaH/N));
+  const boardW = cell*N, boardH = cell*N;
+
+  board.x = Math.round((W - boardW)/2);
+  board.y = Math.round(topPad);
+  board.cell = cell;
+  board.w = boardW;
+  board.h = boardH;
+
+  tray.x = 0;
+  tray.y = board.y + board.h + gap;
+  tray.w = W;
+  tray.h = trayH;
+}
+
+layout();
+
+// Re-layout on resize/orientation changes
+window.addEventListener('resize', ()=>{ layout(); });
+
+  // Colors (cyberpunk)
+  const palette = [
+    '#35f2ff', // cyan
+    '#ff3df2', // neon pink
+    '#9b5bff', // violet
+    '#6dff7b', // neon green
+    '#ffd34a', // warm yellow
+    '#4d7cff', // electric blue
+  ];
+
+  const grid = Array.from({length:N},()=>Array(N).fill(null));
+  let pieces = [];
+  let dragging = null;
+
+  let score = 0;
+  let best = Number(localStorage.getItem('neon_bp_best') || 0);
+  let combo = 0;
+
+  const particles = [];
+  const flashes = [];
+  const floaters = [];
+
+  const elScore = document.getElementById('score');
+    const comboEl = document.getElementById('combo');
+  const comboNumEl = document.getElementById('comboNum');
+  const over = document.getElementById('over');
+  const finalScore = document.getElementById('finalScore');
+  const finalReward = document.getElementById('finalReward');
+
+// ===== Balance UI (mock)
+const btnBalance = document.getElementById('btnBalance');
+const balOverlay = document.getElementById('balOverlay');
+const balClose = document.getElementById('balClose');
+const tabDeposit = document.getElementById('tabDeposit');
+const tabWithdraw = document.getElementById('tabWithdraw');
+const paneDeposit = document.getElementById('paneDeposit');
+const paneWithdraw = document.getElementById('paneWithdraw');
+
+function openBalance(){
+  if(!balOverlay) return;
+  setTab('deposit');
+  balOverlay.classList.add('show');
+  balOverlay.setAttribute('aria-hidden','false');
+  // focus for accessibility
+  setTimeout(()=>{ balClose?.focus?.(); }, 0);
+}
+function closeBalance(){
+  if(!balOverlay) return;
+  balOverlay.classList.remove('show');
+  balOverlay.setAttribute('aria-hidden','true');
+}
+function setTab(which){
+  const dep = which === 'deposit';
+  tabDeposit.classList.toggle('active', dep);
+  tabDeposit.setAttribute('aria-selected', dep ? 'true':'false');
+  tabWithdraw.classList.toggle('active', !dep);
+  tabWithdraw.setAttribute('aria-selected', !dep ? 'true':'false');
+  paneDeposit.classList.toggle('show', dep);
+  paneWithdraw.classList.toggle('show', !dep);
+}
+
+btnBalance?.addEventListener('click', openBalance);
+balClose?.addEventListener('click', closeBalance);
+balOverlay?.addEventListener('click', (e)=>{ if(e.target === balOverlay) closeBalance(); });
+tabDeposit?.addEventListener('click', ()=>setTab('deposit'));
+tabWithdraw?.addEventListener('click', ()=>setTab('withdraw'));
+
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && balOverlay?.classList.contains('show')) closeBalance();
+  if(e.key === 'Escape' && pvpOverlay?.classList.contains('show')) closePvp();
+});
+
+
+// ===== PVP UI (демо без сервера)
+const btnPvp = document.getElementById('btnPvp');
+const pvpOverlay = document.getElementById('pvpOverlay');
+const pvpClose = document.getElementById('pvpClose');
+const tabPvpRooms = document.getElementById('tabPvpRooms');
+const tabPvpCreate = document.getElementById('tabPvpCreate');
+const panePvpRooms = document.getElementById('panePvpRooms');
+const panePvpCreate = document.getElementById('panePvpCreate');
+const panePvpWait = document.getElementById('panePvpWait');
+const pvpRoomsList = document.getElementById('pvpRoomsList');
+const pvpCreateAmount = document.getElementById('pvpCreateAmount');
+const btnPvpCreate = document.getElementById('btnPvpCreate');
+const pvpCreateHint = document.getElementById('pvpCreateHint');
+const btnPvpReady = document.getElementById('btnPvpReady');
+const pvpWaitInfo = document.getElementById('pvpWaitInfo');
+const pvpReadyHint = document.getElementById('pvpReadyHint');
+
+const PVP_KEY = 'demo_pvp_rooms_v1';
+let pvpRoomId = null;
+let pvpRole = null; // 'creator' | 'opponent'
+let dotsTimer = null;
+
+function openPvp(){
+  if(!pvpOverlay) return;
+  // default view
+  pvpRoomId = null;
+  pvpRole = null;
+  setPvpTab('rooms');
+  renderRooms();
+  pvpOverlay.classList.add('show');
+  pvpOverlay.setAttribute('aria-hidden','false');
+  setTimeout(()=>{ pvpClose?.focus?.(); }, 0);
+}
+function closePvp(){
+  if(!pvpOverlay) return;
+  stopDots();
+  pvpOverlay.classList.remove('show');
+  pvpOverlay.setAttribute('aria-hidden','true');
+  pvpCreateHint && (pvpCreateHint.textContent = '');
+  pvpReadyHint && (pvpReadyHint.textContent = '');
+}
+function setPvpTab(which){
+  const rooms = which === 'rooms';
+  const create = which === 'create';
+  const wait = which === 'wait';
+
+  tabPvpRooms?.classList.toggle('active', rooms);
+  tabPvpRooms?.setAttribute('aria-selected', rooms ? 'true':'false');
+  tabPvpCreate?.classList.toggle('active', create);
+  tabPvpCreate?.setAttribute('aria-selected', create ? 'true':'false');
+
+  panePvpRooms?.classList.toggle('show', rooms);
+  panePvpCreate?.classList.toggle('show', create);
+  panePvpWait?.classList.toggle('show', wait);
+}
+
+function loadRooms(){
+  try{
+    return JSON.parse(localStorage.getItem(PVP_KEY) || '[]') || [];
+  }catch(e){
+    return [];
+  }
+}
+function saveRooms(rooms){
+  localStorage.setItem(PVP_KEY, JSON.stringify(rooms));
+}
+function fmtTon(v){
+  const n = Math.round(v*100)/100;
+  return (Number.isInteger(n) ? String(n) : String(n).replace('.', ','));
+}
+
+function renderRooms(){
+  if(!pvpRoomsList) return;
+  const rooms = loadRooms().filter(r => r && r.status !== 'started');
+
+  if(!rooms.length){
+    pvpRoomsList.innerHTML = `<div style="opacity:.8">Комнат пока нет. Создай первую во вкладке «Создать».</div>`;
+    return;
+  }
+
+  const myAddr = tonAddress || 'no_wallet';
+
+  pvpRoomsList.innerHTML = rooms.map(r=>{
+    const isMine = r.creator === myAddr;
+    const full = !!r.opponent;
+    const status = full ? 'Соперник найден' : 'Ожидание';
+    const canJoin = !full && !isMine;
+    const btn = canJoin ? `<button class="balPrimary" data-join="${r.id}" type="button" style="margin-top:10px">Зайти</button>` : `<button class="balPrimary" type="button" data-open="${r.id}" style="margin-top:10px">Открыть</button>`;
+    return `
+      <div style="padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.18)">
+        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div style="font-weight:1000">Ставка: ${fmtTon(r.amount)} TON</div>
+          <div style="opacity:.85">${status}</div>
+        </div>
+        <div style="margin-top:6px;opacity:.8;font-size:12px">Создатель: ${r.creatorShort || '—'}</div>
+        ${btn}
+      </div>
+    `;
+  }).join('');
+
+  // bind buttons
+  pvpRoomsList.querySelectorAll('button[data-join]').forEach(b=>{
+    b.addEventListener('click', ()=> joinRoom(b.getAttribute('data-join')));
+  });
+  pvpRoomsList.querySelectorAll('button[data-open]').forEach(b=>{
+    b.addEventListener('click', ()=> openRoom(b.getAttribute('data-open')));
+  });
+}
+
+function openRoom(id){
+  const rooms = loadRooms();
+  const r = rooms.find(x=>x.id===id);
+  if(!r) return;
+  const myAddr = tonAddress || 'no_wallet';
+  if(r.creator === myAddr){
+    pvpRole = 'creator';
+  } else if(r.opponent === myAddr){
+    pvpRole = 'opponent';
+  } else {
+    // spectator -> treat as opponent if slot free
+    if(!r.opponent){
+      joinRoom(id);
+      return;
+    }
+    pvpRole = null;
+  }
+  pvpRoomId = id;
+  showWait(r);
+}
+
+async function createRoom(){
+  if(!tonAddress){
+    pvpCreateHint && (pvpCreateHint.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
+    return;
+  }
+  const v = parseFloat((pvpCreateAmount?.value || '0').replace(',', '.')) || 0;
+  if(v <= 0){
+    pvpCreateHint && (pvpCreateHint.textContent = 'Введи сумму больше 0.');
+    return;
+  }
+  try{
+    await ensureSession();
+    // списываем ставку на сервере (глобально)
+    await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: v, reason: 'pvp_create' })});
+    await refreshMe();
+  }catch(e){
+    const code = e?.json?.error || e?.message || 'error';
+    if(code === 'insufficient_balance') pvpCreateHint && (pvpCreateHint.textContent = `Недостаточно TON на балансе. Нужно: ${v}. Пополни баланс.`);
+    else pvpCreateHint && (pvpCreateHint.textContent = `Ошибка: ${code}`);
+    return;
+  }
+
+  const id = 'r_' + Math.random().toString(36).slice(2,10);
+  const room = {
+    id,
+    amount: Math.round(v*100)/100,
+    creator: tonAddress,
+    creatorShort: shortAddr(tonAddress),
+    opponent: null,
+    opponentShort: null,
+    creatorReady: false,
+    opponentReady: false,
+    status: 'waiting',
+    createdAt: Date.now()
+  };
+  const rooms = loadRooms();
+  rooms.unshift(room);
+  saveRooms(rooms);
+
+  pvpCreateHint && (pvpCreateHint.textContent = '');
+  pvpRoomId = id;
+  pvpRole = 'creator';
+  showWait(room);
+}
+
+async function joinRoom(id){
+  if(!tonAddress){
+    alert('Сначала подключите TON-кошелёк.');
+    return;
+  }
+  const rooms = loadRooms();
+  const r = rooms.find(x=>x.id===id);
+  if(!r) return;
+  if(r.opponent) { openRoom(id); return; }
+  try{
+    await ensureSession();
+    await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: r.amount, reason: 'pvp_join' })});
+    await refreshMe();
+  }catch(e){
+    const code = e?.json?.error || e?.message || 'error';
+    if(code === 'insufficient_balance') alert('Недостаточно TON на балансе для входа в комнату.');
+    else alert('Ошибка: ' + code);
+    return;
+  }
+
+  r.opponent = tonAddress;
+  r.opponentShort = shortAddr(tonAddress);
+  r.status = 'joined';
+  saveRooms(rooms);
+
+  pvpRoomId = id;
+  pvpRole = 'opponent';
+  showWait(r);
+}
+
+function startDots(){
+  const dotsEl = document.getElementById('pvpDots');
+  if(!dotsEl) return;
+  stopDots();
+  let n = 0;
+  dotsTimer = setInterval(()=>{
+    n = (n+1)%4;
+    dotsEl.textContent = '.'.repeat(n) || '';
+  }, 420);
+}
+function stopDots(){
+  if(dotsTimer){
+    clearInterval(dotsTimer);
+    dotsTimer = null;
+  }
+}
+
+function showWait(room){
+  setPvpTab('wait');
+  startDots();
+  updateWaitView(room);
+}
+
+function updateWaitView(room){
+  if(!room) return;
+  const full = !!room.opponent;
+  const amount = fmtTon(room.amount);
+  const mine = (pvpRole==='creator') ? 'Создатель' : (pvpRole==='opponent' ? 'Участник' : '');
+  pvpWaitInfo && (pvpWaitInfo.textContent = `${mine} • Ставка: ${amount} TON`);
+
+  // show ready only when opponent exists
+  const canReady = full && (pvpRole==='creator' || pvpRole==='opponent');
+  if(btnPvpReady){
+    btnPvpReady.style.display = canReady ? 'block' : 'none';
+  }
+
+  if(!full){
+    pvpReadyHint && (pvpReadyHint.textContent = 'Пока нет соперника. Подождите или откройте страницу во второй вкладке и зайдите в комнату.');
+    return;
+  }
+
+  const c = room.creatorReady ? '✅' : '⏳';
+  const o = room.opponentReady ? '✅' : '⏳';
+  pvpReadyHint && (pvpReadyHint.textContent = `Готовность: создатель ${c} • соперник ${o}`);
+
+  if(room.creatorReady && room.opponentReady){
+    // start game
+    tryStartPvpGame(room);
+  }
+}
+
+function setReady(){
+  if(!pvpRoomId || !pvpRole) return;
+  const rooms = loadRooms();
+  const r = rooms.find(x=>x.id===pvpRoomId);
+  if(!r) return;
+
+  if(pvpRole==='creator') r.creatorReady = true;
+  if(pvpRole==='opponent') r.opponentReady = true;
+
+  // ensure status
+  if(r.opponent) r.status = 'joined';
+  saveRooms(rooms);
+  updateWaitView(r);
+}
+
+function tryStartPvpGame(room){
+  // mark started
+  const rooms = loadRooms();
+  const r = rooms.find(x=>x.id===room.id);
+  if(r){
+    r.status = 'started';
+    saveRooms(rooms);
+  }
+
+  // Start game with bet amount
+  currentBet = room.amount;
+  hideBetPanel();
+  closePvp();
+  gameActive = true;
+  reset();
+}
+
+btnPvp?.addEventListener('click', openPvp);
+pvpClose?.addEventListener('click', closePvp);
+pvpOverlay?.addEventListener('click', (e)=>{ if(e.target === pvpOverlay) closePvp(); });
+tabPvpRooms?.addEventListener('click', ()=>{ setPvpTab('rooms'); stopDots(); renderRooms(); });
+tabPvpCreate?.addEventListener('click', ()=>{ setPvpTab('create'); stopDots(); pvpCreateHint && (pvpCreateHint.textContent=''); });
+btnPvpCreate?.addEventListener('click', createRoom);
+btnPvpReady?.addEventListener('click', setReady);
+
+// update from other tabs
+window.addEventListener('storage', (e)=>{
+  if(e.key !== PVP_KEY) return;
+  if(pvpOverlay?.classList.contains('show')){
+    if(pvpRoomId){
+      const r = loadRooms().find(x=>x.id===pvpRoomId);
+      if(r) updateWaitView(r);
+      else {
+        // room removed
+        setPvpTab('rooms');
+        stopDots();
+        renderRooms();
+      }
+    }else{
+      renderRooms();
+    }
+  }
+});
+
+// ===== Global balance (server) + Deposit/Withdraw (не локально)
+const balValueEl = document.getElementById('balValue');
+const depStatusEl = document.getElementById('depStatus');
+const depHistoryEl = document.getElementById('depHistory');
+const wdStatusEl = document.getElementById('wdStatus');
+const wdHistoryEl = document.getElementById('wdHistory');
+
+let sessionToken = localStorage.getItem('session_token') || '';
+
+function setStatus(el, msg){ if(el) el.textContent = msg || ''; }
+
+async function api(path, opts={}){
+  const headers = Object.assign({}, opts.headers || {});
+  if(!(opts.body instanceof FormData) && opts.body && !headers['Content-Type']) headers['Content-Type']='application/json';
+  if(sessionToken) headers['X-Session-Token'] = sessionToken;
+  const res = await fetch(path, Object.assign({}, opts, { headers }));
+  const json = await res.json().catch(()=>({ ok:false, error:'bad_json' }));
+  if(!json.ok) throw Object.assign(new Error(json.error||'api_error'), { json, status: res.status });
+  return json;
+}
+
+function renderBalanceTonStr(tonStr){
+  if(balValueEl) balValueEl.textContent = String(tonStr ?? '0');
+}
+
+async function refreshMe(){
+  if(!sessionToken) {
+    renderBalanceTonStr('0');
+    return;
+  }
+  try{
+    const me = await api('/api/me');
+    renderBalanceTonStr(me.balance_ton);
+  }catch(e){
+    console.warn('[API] me error', e);
+    renderBalanceTonStr('0');
+  }
+}
+
+function renderHistory(el, items, kind){
+  if(!el) return;
+  el.innerHTML = '';
+  for(const it of items){
+    const row = document.createElement('div');
+    row.style.padding = '10px 12px';
+    row.style.border = '1px solid rgba(255,255,255,.14)';
+    row.style.borderRadius = '14px';
+    row.style.background = 'rgba(255,255,255,.06)';
+    if(kind==='dep'){
+      row.innerHTML = `<b>${it.amount_ton} TON</b> — <span style="opacity:.9">${it.status}</span>`;
+    } else {
+      row.innerHTML = `<b>${it.amount_ton} TON</b> → <span style="opacity:.9">${it.to_address}</span><br><span style="opacity:.85">${it.status}${it.note?(' — '+it.note):''}</span>`;
+    }
+    el.appendChild(row);
+  }
+}
+
+async function refreshHistory(){
+  if(!sessionToken) return;
+  try{
+    const d = await api('/api/deposit/mine');
+    renderHistory(depHistoryEl, d.deposits || [], 'dep');
+  }catch(e){ console.warn(e); }
+  try{
+    const w = await api('/api/withdraw/mine');
+    renderHistory(wdHistoryEl, w.withdrawals || [], 'wd');
+  }catch(e){ console.warn(e); }
+}
+
+async function ensureSession(){
+  if(!tonAddress) throw new Error('wallet_not_connected');
+  if(sessionToken) return;
+  const s = await fetch('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: tonAddress })
+  }).then(r=>r.json());
+  if(!s.ok) throw new Error(s.error||'session_failed');
+  sessionToken = s.token;
+  localStorage.setItem('session_token', sessionToken);
+}
+
+// When wallet connects/disconnects — create/clear session and refresh balance
+const __oldOnStatusChange = tonConnectUI?.onStatusChange;
+// (мы уже подписались выше; просто добавляем ещё действия ниже)
+
+async function onWalletConnected(){
+  try{
+    await ensureSession();
+    await refreshMe();
+    await refreshHistory();
+  }catch(e){
+    console.warn('[session] error', e);
+  }
+}
+
+async function onWalletDisconnected(){
+  sessionToken = '';
+  localStorage.removeItem('session_token');
+  renderBalanceTonStr('0');
+  if(depHistoryEl) depHistoryEl.innerHTML = '';
+  if(wdHistoryEl) wdHistoryEl.innerHTML = '';
+}
+
+// Hook into existing TonConnect status change
+if(tonConnectUI){
+  tonConnectUI.onStatusChange(async (wallet) => {
+    if(wallet){
+      tonAddress = wallet.account?.address || '';
+      setTonBtn('Кошелёк: ' + shortAddr(tonAddress));
+      await onWalletConnected();
+    } else {
+      tonAddress = '';
+      setTonBtn('Ton Connect Wallet');
+      await onWalletDisconnected();
+    }
+  });
+}
+
+// Deposit flow
+document.getElementById('btnDep')?.addEventListener('click', async ()=>{
+  try{
+    if(!tonConnectUI) throw new Error('tonconnect_not_ready');
+    if(!tonAddress) throw new Error('wallet_not_connected');
+    await ensureSession();
+
+    const v = String(document.getElementById('depAmount')?.value || '').replace(',', '.').trim();
+    if(!v || Number(v) <= 0) return;
+
+    setStatus(depStatusEl, 'Создаю инвойс...');
+    const inv = await api('/api/deposit/create', { method:'POST', body: JSON.stringify({ amount_ton: v }) });
+
+    setStatus(depStatusEl, `К оплате: ${inv.amount_ton} TON. ${inv.note || ''} Подтверди транзакцию в кошельке...`);
+    await tonConnectUI.sendTransaction({
+      validUntil: inv.validUntil,
+      messages: [{ address: inv.to, amount: inv.amount_nano }]
+    });
+
+    setStatus(depStatusEl, 'Отправлено. Жду подтверждение в сети...');
+    await refreshHistory();
+    // лёгкий автопулл
+    setTimeout(async ()=>{ await refreshMe(); await refreshHistory(); }, 8000);
+    setTimeout(async ()=>{ await refreshMe(); await refreshHistory(); }, 20000);
+  }catch(e){
+    console.error(e);
+    setStatus(depStatusEl, 'Ошибка: ' + (e.json?.error || e.message || e));
+  }
+});
+
+// Withdraw request flow (создать заявку)
+document.getElementById('btnWd')?.addEventListener('click', async ()=>{
+  try{
+    if(!tonAddress) throw new Error('wallet_not_connected');
+    await ensureSession();
+    const to = String(document.getElementById('wdAddress')?.value || '').trim();
+    const v = String(document.getElementById('wdAmount')?.value || '').replace(',', '.').trim();
+    if(!to) throw new Error('no_to_address');
+    if(!v || Number(v) <= 0) return;
+
+    setStatus(wdStatusEl, 'Создаю заявку на вывод...');
+    await api('/api/withdraw/request', { method:'POST', body: JSON.stringify({ to_address: to, amount_ton: v }) });
+    setStatus(wdStatusEl, 'Заявка создана. Смотри статус ниже.');
+    await refreshMe();
+    await refreshHistory();
+  }catch(e){
+    console.error(e);
+    setStatus(wdStatusEl, 'Ошибка: ' + (e.json?.error || e.message || e));
+  }
+});
+
+// First paint
+refreshMe();
+refreshHistory();
+    const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const rnd=(a,b)=>a+Math.random()*(b-a);
+
+  function shade(hex, amt){
+    hex=hex.replace('#','');
+    const n=parseInt(hex,16);
+    let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    const t=amt<0?0:255, p=Math.abs(amt);
+    r=Math.round((t-r)*p+r);
+    g=Math.round((t-g)*p+g);
+    b=Math.round((t-b)*p+b);
+    return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  }
+
+  function roundedRect(x,y,w,h,r){
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x+rr,y);
+    ctx.arcTo(x+w,y,x+w,y+h,rr);
+    ctx.arcTo(x+w,y+h,x,y+h,rr);
+    ctx.arcTo(x,y+h,x,y,rr);
+    ctx.arcTo(x,y,x+w,y,rr);
+    ctx.closePath();
+  }
+
+  // Neon "glass" block
+  function neonBlock(px,py,s,base,alpha=1,scale=1){
+    const pad = 1;
+    const w=(s-pad)*scale, h=(s-pad)*scale;
+    const x=px+(s-pad-w)/2, y=py+(s-pad-h)/2;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Outer neon glow
+    ctx.shadowColor = base;
+    ctx.shadowBlur = 12;
+    ctx.shadowOffsetY = 0;
+
+    // body gradient
+    const g = ctx.createLinearGradient(x,y,x,y+h);
+    g.addColorStop(0, 'rgba(255,255,255,.38)');
+    g.addColorStop(0.14, shade(base, 0.35));
+    g.addColorStop(0.60, base);
+    g.addColorStop(1, shade(base, -0.22));
+
+    roundedRect(x,y,w,h,12*scale);
+    ctx.fillStyle = g;
+    ctx.fill();
+
+    // inner glass
+    ctx.shadowBlur = 0;
+    const inset = 3*scale;
+    const g2 = ctx.createLinearGradient(x,y,x+w,y+h);
+    g2.addColorStop(0,'rgba(255,255,255,.45)');
+    g2.addColorStop(0.30,'rgba(255,255,255,.10)');
+    g2.addColorStop(1,'rgba(255,255,255,0)');
+    roundedRect(x+inset,y+inset,w-2*inset,h-2*inset,10*scale);
+    ctx.fillStyle = g2;
+    ctx.fill();
+
+    // rim
+    ctx.lineWidth = 2*scale;
+    ctx.strokeStyle = 'rgba(0,0,0,.25)';
+    ctx.stroke();
+
+    // top shine bar
+    ctx.globalAlpha = alpha*0.35;
+    roundedRect(x+inset*1.1,y+inset*1.1,w-2.2*inset,(h-2.2*inset)*0.42,10*scale);
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ===== Shapes
+  const SHAPES = [
+    [{x:0,y:0}],
+    [{x:0,y:0},{x:1,y:0}],
+    [{x:0,y:0},{x:1,y:0},{x:2,y:0}],
+    [{x:0,y:0},{x:1,y:0},{x:2,y:0},{x:3,y:0}],
+    [{x:0,y:0},{x:0,y:1},{x:0,y:2}],
+    [{x:0,y:0},{x:0,y:1},{x:0,y:2},{x:0,y:3}],
+    [{x:0,y:0},{x:1,y:0},{x:0,y:1},{x:1,y:1}],
+    [{x:0,y:0},{x:1,y:0},{x:2,y:0},{x:0,y:1},{x:1,y:1},{x:2,y:1}],
+    [{x:0,y:0},{x:0,y:1},{x:0,y:2},{x:1,y:2}],
+    [{x:1,y:0},{x:1,y:1},{x:1,y:2},{x:0,y:2}],
+    [{x:0,y:0},{x:1,y:0},{x:2,y:0},{x:1,y:1}],
+    [{x:0,y:1},{x:1,y:1},{x:2,y:1},{x:1,y:0}],
+    [{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:2,y:1}],
+    [{x:0,y:1},{x:1,y:1},{x:1,y:0},{x:2,y:0}],
+  ];
+  function normalize(cells){
+    let minX=1e9,minY=1e9;
+    for(const c of cells){minX=Math.min(minX,c.x);minY=Math.min(minY,c.y);}
+    return cells.map(c=>({x:c.x-minX,y:c.y-minY}));
+  }
+  function bounds(cells){
+    let mx=0,my=0;
+    for(const c of cells){mx=Math.max(mx,c.x);my=Math.max(my,c.y);}
+    return {w:mx+1,h:my+1};
+  }
+  // Easy pool: очень лёгкие фигуры (0–3000 очков)
+  const EASY_SHAPES = [
+    SHAPES[0], // 1
+    SHAPES[1], // 2
+    SHAPES[2], // 3
+    SHAPES[3], // 4
+    SHAPES[4], // 3 вертикаль
+    SHAPES[5], // 4 вертикаль
+    SHAPES[6], // 2x2
+  ];
+
+  // Hard pool: только «сложные» фигуры (после 25000+)
+  // По твоему ТЗ: L / S / Z / T и похожие.
+  const HARD_SHAPES = [
+    SHAPES[8],  // L
+    SHAPES[9],  // L mirrored
+    SHAPES[10], // T
+    SHAPES[11], // T mirrored
+    SHAPES[12], // Z
+    SHAPES[13], // S
+  ];
+
+  function newPiece(){
+    let pool;
+
+    // Режимы по счёту (по твоему ТЗ):
+    // 0–3000: EASY
+    // 3001–25000: NORMAL
+    // 25001+: HARD (только сложные)
+    if(score <= 3000){
+      pool = EASY_SHAPES;
+    }else if(score <= 25000){
+      pool = SHAPES;
+    }else{
+      pool = HARD_SHAPES;
+    }
+
+    const shape = pool[(Math.random()*pool.length)|0];
+    return {
+      cells: normalize(shape),
+      color: palette[(Math.random()*palette.length)|0],
+      id: Math.random().toString(36).slice(2)
+    };
+  }
+  function refillPieces(){ pieces = [newPiece(), newPiece(), newPiece()]; }
+
+  // ===== Rules
+  function canPlace(piece,gx,gy){
+    for(const c of piece.cells){
+      const x=gx+c.x, y=gy+c.y;
+      if(x<0||x>=N||y<0||y>=N) return false;
+      if(grid[y][x]) return false;
+    }
+    return true;
+  }
+
+  function place(piece,gx,gy){
+    let placed=0;
+    for(const c of piece.cells){
+      const x=gx+c.x, y=gy+c.y;
+      grid[y][x]=piece.color;
+      placed++;
+      spawnDust(board.x+x*board.cell+board.cell/2, board.y+y*board.cell+board.cell/2, piece.color);
+    }
+
+    const cleared = clearLines();
+    if(cleared>0){
+      combo = clamp(combo+1,1,999);
+      showCombo(combo);
+
+      // Очки только за комбо:
+      // 1..9 комбо подряд: +100
+      // начиная с 10-го комбо подряд: +200
+      const pts = (combo >= 10) ? 200 : 100;
+      score += pts;
+      floaters.push({x:W/2,y:board.y+board.h/2,text:`+${pts}`,t:0});
+    }else{
+      combo = 0;
+    }
+
+    updateScore();
+    if(!hasAnyMove()) gameOver();
+  }
+
+  function clearLines(){
+    const rows=[], cols=[];
+    for(let y=0;y<N;y++){
+      let ok=true; for(let x=0;x<N;x++) if(!grid[y][x]){ok=false;break;}
+      if(ok) rows.push(y);
+    }
+    for(let x=0;x<N;x++){
+      let ok=true; for(let y=0;y<N;y++) if(!grid[y][x]){ok=false;break;}
+      if(ok) cols.push(x);
+    }
+    if(!rows.length && !cols.length) return 0;
+
+    // flash
+    for(const y of rows) flashes.push({x:board.x,y:board.y+y*board.cell,w:board.w,h:board.cell,t:0,d:260});
+    for(const x of cols) flashes.push({x:board.x+x*board.cell,y:board.y,w:board.cell,h:board.h,t:0,d:260});
+
+    for(const y of rows){
+      for(let x=0;x<N;x++){
+        const col=grid[y][x]; grid[y][x]=null;
+        spawnBurst(board.x+x*board.cell+board.cell/2, board.y+y*board.cell+board.cell/2, col||'#fff', 18);
+      }
+    }
+    for(const x of cols){
+      for(let y=0;y<N;y++){
+        if(grid[y][x]){
+          const col=grid[y][x]; grid[y][x]=null;
+          spawnBurst(board.x+x*board.cell+board.cell/2, board.y+y*board.cell+board.cell/2, col, 18);
+        }
+      }
+    }
+    return rows.length+cols.length;
+  }
+
+
+  function addTrashCells(n=1){
+    // добавляем случайные занятые клетки, чтобы усложнить игру (hard mode)
+    for(let i=0;i<n;i++){
+      const empties=[];
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(!grid[y][x]) empties.push({x,y});
+      if(!empties.length) return;
+      const e = empties[(Math.random()*empties.length)|0];
+      grid[e.y][e.x] = palette[(Math.random()*palette.length)|0];
+    }
+  }
+
+
+  function addGarbage(count=1){
+    // добавляет случайные блоки на пустые клетки (усложняет игру)
+    for(let k=0;k<count;k++){
+      const empties=[];
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(!grid[y][x]) empties.push({x,y});
+      if(!empties.length) return;
+      const pick = empties[(Math.random()*empties.length)|0];
+      const col = palette[(Math.random()*palette.length)|0];
+      grid[pick.y][pick.x] = col;
+      spawnBurst(board.x+pick.x*board.cell+board.cell/2, board.y+pick.y*board.cell+board.cell/2, col, 10);
+    }
+  }
+  function hasAnyMove(){
+    for(const p of pieces){
+      if(!p) continue;
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(canPlace(p,x,y)) return true;
+    }
+    return false;
+  }
+
+  // ===== FX
+  function spawnDust(x,y,col){
+    for(let i=0;i<4;i++) particles.push({x,y,vx:rnd(-.7,.7),vy:rnd(-1.4,-.2),r:rnd(1.2,2.6),a:1,col,life:rnd(240,460)});
+  }
+  function spawnBurst(x,y,col,count=20){
+    for(let i=0;i<count;i++){
+      const a=rnd(0,Math.PI*2), sp=rnd(1.0,3.4);
+      particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-rnd(0,1.3),r:rnd(1.6,3.6),a:1,col,life:rnd(280,700)});
+    }
+  }
+
+  // ===== Draw
+  function drawBoardFrame(){
+    const fx = board.x-20, fy = board.y-20, fw = board.w+40, fh = board.h+40;
+
+    // base frame
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,.6)';
+    ctx.shadowBlur=24;
+    ctx.shadowOffsetY=10;
+
+    const g = ctx.createLinearGradient(fx,fy,fx,fy+fh);
+    g.addColorStop(0,'#0c1433');
+    g.addColorStop(1,'#070a1c');
+    roundedRect(fx,fy,fw,fh,26);
+    ctx.fillStyle=g;
+    ctx.fill();
+
+    // neon edge
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(53,242,255,.22)';
+    ctx.stroke();
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,61,242,.16)';
+    roundedRect(fx+6,fy+6,fw-12,fh-12,22);
+    ctx.stroke();
+
+    // inner panel
+    const px = board.x-6, py=board.y-6, pw=board.w+12, ph=board.h+12;
+    const g2 = ctx.createLinearGradient(px,py,px,py+ph);
+    g2.addColorStop(0,'rgba(255,255,255,.06)');
+    g2.addColorStop(1,'rgba(0,0,0,.18)');
+    roundedRect(px,py,pw,ph,22);
+    ctx.fillStyle = g2;
+    ctx.fill();
+
+    // glossy top sheen
+    ctx.globalAlpha = 0.12;
+    roundedRect(px+10, py+10, pw-20, (ph-20)*0.22, 18);
+    ctx.fillStyle = 'rgba(255,255,255,.28)';
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawGridCells(){
+    // Uniform cell color like your screenshot (no checkerboard)
+    const bg = 'rgba(255,255,255,.035)';
+    for(let y=0;y<N;y++){
+      for(let x=0;x<N;x++){
+        const px=board.x+x*board.cell;
+        const py=board.y+y*board.cell;
+        ctx.fillStyle = bg;
+        roundedRect(px+2, py+2, board.cell-4, board.cell-4, 9);
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawPlaced(){
+    for(let y=0;y<N;y++){
+      for(let x=0;x<N;x++){
+        const col=grid[y][x];
+        if(!col) continue;
+        neonBlock(board.x+x*board.cell+1, board.y+y*board.cell+1, board.cell-2, col, 1, 1);
+      }
+    }
+  }
+
+  function drawTray(){
+    // subtle tray glow band so pieces look "anchored" and not floating off-screen
+    ctx.save();
+    const bandY = tray.y + 20;
+    const g = ctx.createLinearGradient(0, bandY, 0, tray.y+tray.h);
+    g.addColorStop(0, 'rgba(255,255,255,.06)');
+    g.addColorStop(1, 'rgba(0,0,0,.18)');
+    ctx.fillStyle = g;
+    roundedRect(28, tray.y+18, W-56, tray.h-36, 22);
+    ctx.fill();
+
+    // neon rim
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(53,242,255,.18)';
+    roundedRect(28, tray.y+18, W-56, tray.h-36, 22);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function pieceSlots(){
+    // Always inside tray bounds (fix overlap)
+    const cy = tray.y + tray.h/2 + 10;
+    return [
+      {cx: W*0.22, cy},
+      {cx: W*0.50, cy},
+      {cx: W*0.78, cy},
+    ];
+  }
+
+  function drawPieceAt(piece,cx,cy,ghost=false){
+    const b=bounds(piece.cells);
+    const w=b.w*board.cell, h=b.h*board.cell;
+    const ox=cx-w/2, oy=cy-h/2;
+    const a=ghost?0.35:1;
+
+    for(const c of piece.cells){
+      neonBlock(ox + c.x*board.cell + 1, oy + c.y*board.cell + 1, board.cell-2, piece.color, a, 1);
+    }
+  }
+
+  function drawPieces(){
+    const slots = pieceSlots();
+    for(let i=0;i<3;i++){
+      const p=pieces[i];
+      if(!p) continue;
+      if(dragging && dragging.idx===i) continue;
+      drawPieceAt(p, slots[i].cx, slots[i].cy, false);
+    }
+  }
+
+  function drawDragging(){
+    if(!dragging) return;
+
+    // snap preview
+    if(dragging.valid && dragging.snapX!=null){
+      for(const c of dragging.piece.cells){
+        const x=dragging.snapX+c.x, y=dragging.snapY+c.y;
+        neonBlock(board.x+x*board.cell+1, board.y+y*board.cell+1, board.cell-2, dragging.piece.color, 0.28, 1);
+      }
+    }
+    drawPieceAt(dragging.piece, dragging.px, dragging.py, false);
+  }
+
+  function drawFlashes(dt){
+    for(let i=flashes.length-1;i>=0;i--){
+      const f=flashes[i];
+      f.t+=dt;
+      const p=f.t/f.d;
+      const a=p<.5?p/.5:1-(p-.5)/.5;
+      ctx.save();
+      ctx.globalAlpha = a*0.70;
+      ctx.fillStyle = 'rgba(53,242,255,.55)';
+      roundedRect(f.x+10,f.y+10,f.w-20,f.h-20,18);
+      ctx.fill();
+      ctx.globalAlpha = a*0.50;
+      ctx.fillStyle = 'rgba(255,61,242,.35)';
+      roundedRect(f.x+16,f.y+16,f.w-32,f.h-32,16);
+      ctx.fill();
+      ctx.restore();
+      if(f.t>=f.d) flashes.splice(i,1);
+    }
+  }
+
+  function drawParticles(dt){
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
+      p.life-=dt;
+      p.x += p.vx*dt*0.06;
+      p.y += p.vy*dt*0.06;
+      p.vy += 0.012*dt;
+      p.a = Math.max(0, p.life/700);
+
+      ctx.save();
+      ctx.globalAlpha = p.a;
+      ctx.shadowColor = p.col;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = p.col;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+
+      if(p.life<=0) particles.splice(i,1);
+    }
+  }
+
+  function drawFloaters(dt){
+    for(let i=floaters.length-1;i>=0;i--){
+      const f=floaters[i];
+      f.t+=dt;
+      const a=Math.max(0,1-f.t/740);
+      ctx.save();
+      ctx.globalAlpha=a;
+      ctx.fillStyle='#fff';
+      ctx.font='1000 28px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.shadowColor='rgba(0,0,0,.45)';
+      ctx.shadowBlur=18;
+      ctx.fillText(f.text,f.x,f.y - f.t*0.06);
+      ctx.restore();
+      if(f.t>=740) floaters.splice(i,1);
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawBoardFrame();
+    drawGridCells();
+    drawPlaced();
+    if(gameActive){
+      drawTray();
+      drawPieces();
+      drawDragging();
+    }
+
+  }
+
+  // ===== Input
+  function getPointerPos(e){
+    const r=canvas.getBoundingClientRect();
+    return {x:(e.clientX-r.left)*(canvas.width/r.width),
+            y:(e.clientY-r.top)*(canvas.height/r.height)};
+  }
+  function inTray(px,py){ return py >= tray.y && py <= tray.y+tray.h; }
+
+  function pickPieceAt(x,y){
+    const slots = pieceSlots();
+    for(let i=0;i<3;i++){
+      const p=pieces[i]; if(!p) continue;
+      const b=bounds(p.cells);
+      const w=b.w*board.cell, h=b.h*board.cell;
+      const left=slots[i].cx-w/2, top=slots[i].cy-h/2;
+      if(x>=left && x<=left+w && y>=top && y<=top+h) return i;
+    }
+    return -1;
+  }
+
+  function pxToCell(px,py){
+    return {cx:Math.floor((px-board.x)/board.cell), cy:Math.floor((py-board.y)/board.cell)};
+  }
+  function inBoard(px,py){
+    return px>=board.x && px<board.x+board.w && py>=board.y && py<board.y+board.h;
+  }
+
+  function startDrag(idx,x,y){
+    const piece=pieces[idx]; if(!piece) return;
+    dragging={idx,piece,px:x,py:y,ox:0,oy:0,valid:false,snapX:null,snapY:null};
+    // keep finger offset relative to piece's visual center
+    const slots = pieceSlots();
+    dragging.ox = x - slots[idx].cx;
+    dragging.oy = y - slots[idx].cy;
+    navigator.vibrate?.(8);
+  }
+  function updateDrag(x,y){
+    if(!dragging) return;
+    dragging.px = x - dragging.ox;
+    dragging.py = y - dragging.oy;
+
+    if(inBoard(dragging.px, dragging.py)){
+      const {cx,cy} = pxToCell(dragging.px, dragging.py);
+      const b=bounds(dragging.piece.cells);
+      const gx = clamp(cx - Math.floor(b.w/2), 0, N-1);
+      const gy = clamp(cy - Math.floor(b.h/2), 0, N-1);
+      dragging.valid = canPlace(dragging.piece, gx, gy);
+      dragging.snapX=gx; dragging.snapY=gy;
+    }else{
+      dragging.valid=false;
+      dragging.snapX=dragging.snapY=null;
+    }
+  }
+  function endDrag(){
+    if(!dragging) return;
+    const {piece,idx,valid,snapX,snapY} = dragging;
+    if(valid && snapX!=null){
+      place(piece,snapX,snapY);
+      pieces[idx]=null;
+      if(pieces.every(p=>p===null)){
+        refillPieces();
+        if(!hasAnyMove()) gameOver();
+      }
+    }
+    dragging=null;
+  }
+
+  let down=false;
+  canvas.addEventListener('pointerdown', (e)=>{
+    if(!gameActive) return;
+    const p=getPointerPos(e);
+    down=true;
+    canvas.setPointerCapture(e.pointerId);
+    const idx=pickPieceAt(p.x,p.y);
+    if(idx>=0) startDrag(idx,p.x,p.y);
+  });
+  canvas.addEventListener('pointermove', (e)=>{
+    if(!gameActive) return;
+    if(!down) return;
+    const p=getPointerPos(e);
+    if(dragging) updateDrag(p.x,p.y);
+  });
+  canvas.addEventListener('pointerup', ()=>{ if(!gameActive) return; down=false; endDrag();});
+  canvas.addEventListener('pointercancel', ()=>{ if(!gameActive) return; down=false; endDrag();});
+
+  // ===== Combo
+  let comboTimer=0;
+  function showCombo(n){
+    comboNumEl.textContent = String(n);
+    comboEl.classList.remove('show');
+    void comboEl.offsetWidth;
+    comboEl.classList.add('show');
+    clearTimeout(comboTimer);
+    comboTimer=setTimeout(()=>comboEl.classList.remove('show'),720);
+  }
+
+  // ===== Score / Over
+  function updateScore(){
+    elScore.textContent = score;
+  }
+  async function gameOver(){
+    gameActive = false;
+    finalScore.textContent = score;
+    if(finalReward) finalReward.textContent = '';
+    over.classList.add('show');
+
+    // Пэйаут за игру (по порогам): 30k+/50k+/100k+
+    if(currentGameRunId){
+      try{
+        if(finalReward) finalReward.textContent = 'Проверяем награду...';
+        const r = await api('/api/game/finish', {
+          method:'POST',
+          body: JSON.stringify({ game_run_id: currentGameRunId, score })
+        });
+
+        if(r.multiplier > 0){
+          if(finalReward) finalReward.textContent = `Награда: +${r.reward_ton} TON (x${r.multiplier})`;
+        }else{
+          if(finalReward) finalReward.textContent = 'Награды нет (нужно 30000+).';
+        }
+
+        currentGameRunId = '';
+        await refreshMe();
+      }catch(e){
+        const msg = e?.json?.error || e?.message || 'error';
+        if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
+      }
+    }
+  }
+  function reset(){
+    for(let y=0;y<N;y++) for(let x=0;x<N;x++) grid[y][x]=null;
+    score=0; combo=0;
+    particles.length=0; flashes.length=0; floaters.length=0;
+    refillPieces();
+    updateScore();
+    over.classList.remove('show');
+  }
+
+  
+  function showBetPanel(){
+    betPanel?.classList.add('show');
+    betPanel?.setAttribute('aria-hidden','false');
+    currentBet = 0;
+    betHintEl && (betHintEl.textContent = '');
+  }
+  function hideBetPanel(){
+    betPanel?.classList.remove('show');
+    betPanel?.setAttribute('aria-hidden','true');
+  }
+
+  async function getServerBalanceTon(){
+    await ensureSession();
+    const me = await api('/api/me');
+    const n = parseFloat(String(me.balance_ton).replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function resetToBet(){
+    reset();
+    gameActive = false;
+    over.classList.remove('show');
+    currentGameRunId = '';
+    if(finalReward) finalReward.textContent = '';
+    showBetPanel();
+  }
+
+  // Start game with bet
+  btnStartGame?.addEventListener('click', async ()=>{
+    const v = START_BET;
+    // require wallet connection (future withdrawals go to connected address)
+    if(!tonAddress){
+      betHintEl && (betHintEl.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
+      return;
+    }
+    let bal = 0;
+    try{
+      bal = await getServerBalanceTon();
+      if(bal < v){
+        betHintEl && (betHintEl.textContent = `Недостаточно TON на балансе. Нужно: ${v}, доступно: ${bal}. Пополни баланс во вкладке «Баланс».`);
+        return;
+      }
+      currentBet = v;
+      const spendRes = await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: currentBet, reason: 'game_start' })});
+      currentGameRunId = spendRes.game_run_id || '';
+      await refreshMe();
+    }catch(e){
+      const code = e?.json?.error || e?.message || 'error';
+      betHintEl && (betHintEl.textContent = `Ошибка: ${code}`);
+      return;
+    }
+
+    betHintEl && (betHintEl.textContent = '');
+    hideBetPanel();
+    gameActive = true;
+    reset();
+  });
+
+  document.getElementById('btnNew').addEventListener('click', resetToBet);
+  document.getElementById('btnRestart').addEventListener('click', resetToBet);
+  document.getElementById('btnClose').addEventListener('click', ()=>over.classList.remove('show'));
+
+  // ===== Seed: a few blocks
+  // so it doesn't look empty (optional)
+  function seed(){
+    const demo = [
+      {x:2,y:2,c:1},{x:3,y:2,c:1},{x:3,y:3,c:1},{x:4,y:3,c:1},
+      {x:1,y:4,c:0},{x:2,y:4,c:0},{x:3,y:4,c:0},{x:2,y:5,c:0},
+      {x:5,y:5,c:5},{x:6,y:5,c:5},{x:7,y:5,c:5},{x:6,y:6,c:5},
+    ];
+    for(const b of demo){
+      if(b.x>=0 && b.x<N && b.y>=0 && b.y<N) grid[b.y][b.x] = palette[b.c];
+    }
+  }
+
+  // Init
+  refillPieces();
+  // seed(); // если хочешь пустое поле как на скрине — оставь выключенным
+  updateScore();
+
+  // Loop
+  let last=performance.now();
+  function tick(now){
+    const dt=now-last; last=now;
+    draw();
+    drawFlashes(dt);
+    drawParticles(dt);
+    drawFloaters(dt);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

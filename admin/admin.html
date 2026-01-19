@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin: Withdraw Requests</title>
+  <style>
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial; margin: 24px; }
+    input, button, select { padding: 8px 10px; font-size: 14px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f6f6f6; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <h2>Заявки на вывод</h2>
+  <div class="row">
+    <label>Admin token:</label>
+    <input id="token" placeholder="ADMIN_TOKEN" style="min-width: 320px" />
+    <button id="load">Обновить</button>
+    <span class="muted" id="status"></span>
+  </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>id</th>
+        <th>address</th>
+        <th>to</th>
+        <th>amount_nano</th>
+        <th>status</th>
+        <th>created_at</th>
+        <th>action</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+const tokenEl = document.getElementById('token');
+const statusEl = document.getElementById('status');
+const tbody = document.querySelector('#tbl tbody');
+
+function fmtTs(ms){
+  try { return new Date(ms).toLocaleString(); } catch { return String(ms); }
+}
+
+async function load(){
+  statusEl.textContent = 'загрузка...';
+  tbody.innerHTML = '';
+  const t = tokenEl.value.trim();
+  const res = await fetch('/api/admin/withdraws', { headers: { 'X-Admin-Token': t }});
+  const json = await res.json();
+  if (!json.ok) {
+    statusEl.textContent = 'ошибка: ' + (json.error || res.status);
+    return;
+  }
+  statusEl.textContent = 'ok';
+  for (const w of json.withdrawals) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${w.id}</td>
+      <td>${w.address}</td>
+      <td>${w.to_address}</td>
+      <td>${w.amount_nano}</td>
+      <td>${w.status}</td>
+      <td>${fmtTs(w.created_at)}</td>
+      <td></td>
+    `;
+    const tdAction = tr.querySelector('td:last-child');
+    if (w.status === 'pending') {
+      const approve = document.createElement('button');
+      approve.textContent = 'Approve';
+      approve.onclick = () => decide(w.id, 'approve');
+
+      const reject = document.createElement('button');
+      reject.textContent = 'Reject';
+      reject.onclick = () => decide(w.id, 'reject');
+
+      tdAction.appendChild(approve);
+      tdAction.appendChild(reject);
+    } else {
+      tdAction.textContent = w.note || '';
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+async function decide(id, decision){
+  const t = tokenEl.value.trim();
+  const note = prompt('Note (optional):') || '';
+  const res = await fetch('/api/admin/withdraws/decision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': t },
+    body: JSON.stringify({ id, decision, note })
+  });
+  const json = await res.json();
+  if (!json.ok) alert('Ошибка: ' + (json.error || res.status));
+  await load();
+}
+
+document.getElementById('load').addEventListener('click', load);
+</script>
+
+<hr style="margin:24px 0; opacity:.25">
+
+<section style="max-width:900px; margin:0 auto; padding:12px 8px;">
+  <h2 style="margin:0 0 10px 0;">Админка — Начислить баланс</h2>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+    <input id="adm_token" placeholder="ADMIN_TOKEN" style="padding:8px 10px; min-width:220px;">
+    <input id="adm_addr" placeholder="Адрес кошелька (UQ.../EQ...)" style="padding:8px 10px; min-width:360px; flex:1;">
+    <input id="adm_amount" placeholder="Сумма (TON)" value="1" style="padding:8px 10px; width:140px;">
+    <input id="adm_note" placeholder="Комментарий (необязательно)" style="padding:8px 10px; min-width:260px; flex:1;">
+    <button id="adm_credit_btn" style="padding:8px 14px; cursor:pointer;">Начислить</button>
+  </div>
+  <pre id="adm_credit_out" style="background:rgba(0,0,0,.25); padding:10px; border-radius:8px; overflow:auto; white-space:pre-wrap; margin:0;"></pre>
+  <div style="opacity:.75; margin-top:8px; font-size:13px;">
+    Начисление идёт через ledger (reason: <b>admin_credit</b>). Токен можно передавать и как параметр URL: <code>?token=ADMIN777</code>.
+  </div>
+</section>
+
+<script>
+(function(){
+  const $ = (id)=>document.getElementById(id);
+
+  // автоподстановка token из URL ?token=...
+  try{
+    const u = new URL(location.href);
+    const t = u.searchParams.get('token');
+    if(t && $('adm_token')) $('adm_token').value = t;
+  }catch(e){}
+
+  async function api(path, opts){
+    const r = await fetch(path, opts);
+    const txt = await r.text();
+    let j;
+    try{ j = JSON.parse(txt); } catch(e){ throw new Error('bad_json: ' + txt.slice(0,200)); }
+    if(!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  const btn = $('adm_credit_btn');
+  if(!btn) return;
+
+  btn.onclick = async ()=>{
+    $('adm_credit_out').textContent = '...';
+    const token = ($('adm_token').value || '').trim();
+    const address = ($('adm_addr').value || '').trim();
+    const amountTon = Number(($('adm_amount').value || '').trim());
+    const note = ($('adm_note').value || '').trim();
+
+    if(!token){ $('adm_credit_out').textContent='Ошибка: ADMIN_TOKEN пуст'; return; }
+    if(!address){ $('adm_credit_out').textContent='Ошибка: адрес пуст'; return; }
+    if(!Number.isFinite(amountTon) || amountTon<=0){ $('adm_credit_out').textContent='Ошибка: сумма TON неверная'; return; }
+
+    try{
+      const j = await api('/api/admin/credit?token=' + encodeURIComponent(token), {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ address, amountTon, note })
+      });
+      $('adm_credit_out').textContent = JSON.stringify(j, null, 2);
+    }catch(e){
+      $('adm_credit_out').textContent = 'Ошибка: ' + (e.message || e);
+    }
+  };
+})();
+</script>
+
+</body>
+</html>
