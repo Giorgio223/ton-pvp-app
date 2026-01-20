@@ -219,6 +219,97 @@ app.get('/api/deposit/mine', async (req, res) => {
   }
 });
 
+/* ---------------------- ADMIN: dashboard endpoints ---------------------- */
+
+// ADMIN: users + balances
+app.get('/api/admin/users', async (req, res) => {
+  try {
+    mustAdmin(req);
+
+    const q = (req.query.q || '').toString().trim().toLowerCase();
+    const limit = Math.min(Number(req.query.limit || 200), 1000);
+
+    const r = await pool.query(
+      `
+      SELECT
+        u.address,
+        u.created_at,
+        COALESCE(SUM(l.delta_nano), 0)::bigint AS balance_nano
+      FROM users u
+      LEFT JOIN ledger l ON l.address = u.address
+      GROUP BY u.address, u.created_at
+      ORDER BY u.created_at DESC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    let rows = r.rows;
+    if (q) rows = rows.filter((x) => String(x.address).toLowerCase().includes(q));
+
+    res.json({
+      ok: true,
+      users: rows.map((row) => ({
+        address: row.address,
+        created_at: row.created_at,
+        balance_nano: (typeof row.balance_nano === 'bigint') ? row.balance_nano.toString() : String(row.balance_nano),
+      })),
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+// ADMIN: deposits list
+app.get('/api/admin/deposits', async (req, res) => {
+  try {
+    mustAdmin(req);
+
+    const q = (req.query.q || '').toString().trim().toLowerCase();
+    const status = (req.query.status || '').toString().trim();
+    const limit = Math.min(Number(req.query.limit || 200), 1000);
+
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    if (status) {
+      params.push(status);
+      where += ` AND status = $${params.length}`;
+    }
+
+    // limit is safe because we clamp to number above
+    const sql = `
+      SELECT id, address, amount_nano, comment, status, tx_hash, created_at, confirmed_at
+      FROM deposits
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+
+    const r = await pool.query(sql, params);
+
+    let rows = r.rows;
+    if (q) {
+      rows = rows.filter((d) =>
+        String(d.address || '').toLowerCase().includes(q) ||
+        String(d.id || '').toLowerCase().includes(q)
+      );
+    }
+
+    res.json({
+      ok: true,
+      deposits: rows.map((d) => ({
+        ...d,
+        amount_nano: (typeof d.amount_nano === 'bigint') ? d.amount_nano.toString() : String(d.amount_nano),
+      })),
+    });
+  } catch (e) {
+    res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+/* ---------------------- user spend/refund/game ---------------------- */
+
 // Spend (basic)
 app.post('/api/spend', async (req, res) => {
   const client = await pool.connect();
