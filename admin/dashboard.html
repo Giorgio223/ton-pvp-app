@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TON PVP Admin Dashboard</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
+    input, select, button { padding: 8px 10px; font-size: 14px; }
+    button { cursor: pointer; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; margin-top: 12px; }
+    .muted { color:#666; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
+    th { background:#fafafa; position: sticky; top: 0; }
+    .pill { display:inline-block; padding:2px 8px; border-radius: 999px; border:1px solid #ddd; font-size:12px; }
+    .ok { border-color:#b7e2c1; background:#effaf2; }
+    .warn { border-color:#ffd08a; background:#fff7e8; }
+    .bad { border-color:#ffb3b3; background:#fff0f0; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .right { text-align:right; }
+  </style>
+</head>
+<body>
+  <h2>Admin Dashboard</h2>
+  <div class="row">
+    <span class="muted">Токен берётся из URL: <span class="mono">?token=...</span></span>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <label>Раздел:</label>
+      <select id="tab">
+        <option value="users">Users + Balances</option>
+        <option value="deposits">Deposits</option>
+        <option value="withdrawals">Withdrawals</option>
+      </select>
+
+      <label>Фильтр (адрес содержит):</label>
+      <input id="q" placeholder="0:... или UQ..." style="min-width:320px" />
+
+      <label>Статус:</label>
+      <select id="status">
+        <option value="">(любой)</option>
+        <option value="pending">pending</option>
+        <option value="confirmed">confirmed</option>
+        <option value="paid">paid</option>
+        <option value="failed">failed</option>
+        <option value="rejected">rejected</option>
+        <option value="processing">processing</option>
+      </select>
+
+      <button id="refresh">Обновить</button>
+      <label class="muted"><input type="checkbox" id="auto" checked /> авто (10с)</label>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <span class="muted" id="info">—</span>
+    </div>
+
+    <div style="margin-top:12px; overflow:auto; max-height: 70vh;">
+      <table id="tbl">
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const token = new URLSearchParams(location.search).get('token') || '';
+  const $ = (id) => document.getElementById(id);
+
+  function fmtTonFromNanoStr(nanoStr) {
+    try {
+      const n = BigInt(nanoStr);
+      const sign = n < 0n ? '-' : '';
+      const abs = n < 0n ? -n : n;
+      const whole = abs / 1000000000n;
+      let frac = (abs % 1000000000n).toString().padStart(9,'0');
+      frac = frac.replace(/0+$/,'');
+      return sign + whole.toString() + (frac ? '.' + frac : '');
+    } catch {
+      return String(nanoStr);
+    }
+  }
+
+  function pill(status) {
+    const s = String(status || '');
+    let cls = 'pill';
+    if (s === 'paid' || s === 'confirmed') cls += ' ok';
+    else if (s === 'pending' || s === 'processing') cls += ' warn';
+    else if (s === 'failed' || s === 'rejected') cls += ' bad';
+    return `<span class="${cls}">${s || '-'}</span>`;
+  }
+
+  async function apiGet(path) {
+    const url = new URL(path, location.origin);
+    if (token) url.searchParams.set('token', token);
+    const r = await fetch(url.toString());
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  async function apiPost(path, body) {
+    const url = new URL(path, location.origin);
+    if (token) url.searchParams.set('token', token);
+    const r = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  function setTable(headCells, rowsHtml) {
+    $('thead').innerHTML = `<tr>${headCells.map(h => `<th>${h}</th>`).join('')}</tr>`;
+    $('tbody').innerHTML = rowsHtml.join('') || `<tr><td class="muted" colspan="${headCells.length}">нет данных</td></tr>`;
+  }
+
+  async function load() {
+    const tab = $('tab').value;
+    const q = $('q').value.trim();
+    const status = $('status').value;
+
+    $('info').textContent = 'Загрузка...';
+
+    if (tab === 'users') {
+      const url = new URL('/api/admin/users', location.origin);
+      if (token) url.searchParams.set('token', token);
+      if (q) url.searchParams.set('q', q);
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+
+      $('info').textContent = `Users: ${j.users.length}`;
+      setTable(
+        ['Address', 'Balance (TON)', 'Balance (nano)', 'Created'],
+        j.users.map(u => `
+          <tr>
+            <td class="mono">${u.address}</td>
+            <td>${fmtTonFromNanoStr(u.balance_nano)}</td>
+            <td class="mono">${u.balance_nano}</td>
+            <td class="mono">${u.created_at ? new Date(Number(u.created_at)).toISOString() : '-'}</td>
+          </tr>
+        `)
+      );
+      return;
+    }
+
+    if (tab === 'deposits') {
+      const url = new URL('/api/admin/deposits', location.origin);
+      if (token) url.searchParams.set('token', token);
+      if (q) url.searchParams.set('q', q);
+      if (status) url.searchParams.set('status', status);
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
+
+      $('info').textContent = `Deposits: ${j.deposits.length}`;
+      setTable(
+        ['ID', 'User', 'Amount (TON)', 'Status', 'tx_hash', 'created_at', 'confirmed_at', 'comment'],
+        j.deposits.map(d => `
+          <tr>
+            <td class="mono">${d.id}</td>
+            <td class="mono">${d.address}</td>
+            <td>${fmtTonFromNanoStr(d.amount_nano)}</td>
+            <td>${pill(d.status)}</td>
+            <td class="mono">${d.tx_hash || '-'}</td>
+            <td class="mono">${d.created_at ? new Date(Number(d.created_at)).toISOString() : '-'}</td>
+            <td class="mono">${d.confirmed_at ? new Date(Number(d.confirmed_at)).toISOString() : '-'}</td>
+            <td class="mono">${d.comment || '-'}</td>
+          </tr>
+        `)
+      );
+      return;
+    }
+
+    if (tab === 'withdrawals') {
+      // используем существующий endpoint list, а фильтруем на фронте (проще и надёжно)
+      const list = await apiGet('/api/admin/withdraw/list');
+      let ws = list.withdrawals || [];
+      if (q) {
+        const qq = q.toLowerCase();
+        ws = ws.filter(w =>
+          String(w.address || '').toLowerCase().includes(qq) ||
+          String(w.to_address || '').toLowerCase().includes(qq) ||
+          String(w.id || '').toLowerCase().includes(qq)
+        );
+      }
+      if (status) ws = ws.filter(w => String(w.status) === status);
+
+      $('info').textContent = `Withdrawals: ${ws.length}`;
+      setTable(
+        ['ID', 'User', 'To', 'Amount (TON)', 'Status', 'created_at', 'note', 'Actions'],
+        ws.map(w => `
+          <tr>
+            <td class="mono">${w.id}</td>
+            <td class="mono">${w.address}</td>
+            <td class="mono">${w.to_address}</td>
+            <td>${fmtTonFromNanoStr(w.amount_nano)}</td>
+            <td>${pill(w.status)}</td>
+            <td class="mono">${w.created_at ? new Date(Number(w.created_at)).toISOString() : '-'}</td>
+            <td class="mono">${w.note || '-'}</td>
+            <td class="right">
+              <button onclick="approve('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Approve</button>
+              <button onclick="reject('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Reject</button>
+            </td>
+          </tr>
+        `)
+      );
+      return;
+    }
+  }
+
+  window.approve = async (id) => {
+    if (!confirm('Approve and SEND TON? id=' + id)) return;
+    try {
+      const r = await apiPost('/api/admin/withdraw/approve', { id });
+      alert('OK: ' + JSON.stringify(r));
+      await load();
+    } catch (e) {
+      alert('ERROR: ' + e.message);
+    }
+  };
+
+  window.reject = async (id) => {
+    if (!confirm('Reject and REFUND hold? id=' + id)) return;
+    try {
+      const r = await apiPost('/api/admin/withdraw/reject', { id });
+      alert('OK: ' + JSON.stringify(r));
+      await load();
+    } catch (e) {
+      alert('ERROR: ' + e.message);
+    }
+  };
+
+  $('refresh').onclick = () => load().catch(e => $('info').textContent = 'Ошибка: ' + e.message);
+  $('tab').onchange = () => load().catch(e => $('info').textContent = 'Ошибка: ' + e.message);
+
+  let timer = null;
+  function setAuto() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    if ($('auto').checked) {
+      timer = setInterval(() => load().catch(()=>{}), 10000);
+    }
+  }
+  $('auto').onchange = setAuto;
+  setAuto();
+
+  load().catch(e => $('info').textContent = 'Ошибка: ' + e.message);
+</script>
+</body>
+</html>
