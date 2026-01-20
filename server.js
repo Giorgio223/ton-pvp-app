@@ -1,4 +1,4 @@
-// server.js (ESM) — Postgres PROD version + /admin protected by token
+// server.js (ESM) — Postgres PROD version + /admin protected by token + admin dashboard endpoints (BigInt-safe)
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
@@ -38,7 +38,7 @@ const TETRIS_M2 = Number(process.env.TETRIS_M2 || '2');
 const TETRIS_M3 = Number(process.env.TETRIS_M3 || '3');
 
 if (!TREASURY_ADDRESS) {
-  console.error('[server] TREASURY_ADDRESS missing');
+  console.error('[server] TREASURY_ADDRESS missing in .env');
   process.exit(1);
 }
 
@@ -92,6 +92,13 @@ function mustAdmin(req) {
 
 function jsonError(res, e) {
   res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
+}
+
+// ✅ Convert BigInt safely (JSON cannot serialize BigInt)
+function toStr(v) {
+  if (typeof v === 'bigint') return v.toString();
+  if (v === null || v === undefined) return null;
+  return String(v);
 }
 
 function readSessionToken(req) {
@@ -192,7 +199,7 @@ app.post('/api/deposit/create', async (req, res) => {
   }
 });
 
-// Deposit mine
+// Deposit mine (BigInt-safe)
 app.get('/api/deposit/mine', async (req, res) => {
   try {
     const s = await getSession(req);
@@ -210,8 +217,14 @@ app.get('/api/deposit/mine', async (req, res) => {
     res.json({
       ok: true,
       deposits: r.rows.map((row) => ({
-        ...row,
-        amount_ton: nanoToTonStr(row.amount_nano),
+        id: row.id,
+        amount_nano: toStr(row.amount_nano),
+        amount_ton: nanoToTonStr(row.amount_nano ?? 0),
+        comment: row.comment,
+        status: row.status,
+        tx_hash: row.tx_hash,
+        created_at: toStr(row.created_at),
+        confirmed_at: toStr(row.confirmed_at),
       }))
     });
   } catch (e) {
@@ -221,7 +234,7 @@ app.get('/api/deposit/mine', async (req, res) => {
 
 /* ---------------------- ADMIN: dashboard endpoints ---------------------- */
 
-// ADMIN: users + balances
+// ADMIN: users + balances (BigInt-safe)
 app.get('/api/admin/users', async (req, res) => {
   try {
     mustAdmin(req);
@@ -251,8 +264,8 @@ app.get('/api/admin/users', async (req, res) => {
       ok: true,
       users: rows.map((row) => ({
         address: row.address,
-        created_at: row.created_at,
-        balance_nano: (typeof row.balance_nano === 'bigint') ? row.balance_nano.toString() : String(row.balance_nano),
+        created_at: toStr(row.created_at),
+        balance_nano: toStr(row.balance_nano),
       })),
     });
   } catch (e) {
@@ -260,7 +273,7 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-// ADMIN: deposits list
+// ADMIN: deposits list (BigInt-safe)
 app.get('/api/admin/deposits', async (req, res) => {
   try {
     mustAdmin(req);
@@ -277,7 +290,6 @@ app.get('/api/admin/deposits', async (req, res) => {
       where += ` AND status = $${params.length}`;
     }
 
-    // limit is safe because we clamp to number above
     const sql = `
       SELECT id, address, amount_nano, comment, status, tx_hash, created_at, confirmed_at
       FROM deposits
@@ -299,8 +311,14 @@ app.get('/api/admin/deposits', async (req, res) => {
     res.json({
       ok: true,
       deposits: rows.map((d) => ({
-        ...d,
-        amount_nano: (typeof d.amount_nano === 'bigint') ? d.amount_nano.toString() : String(d.amount_nano),
+        id: d.id,
+        address: d.address,
+        amount_nano: toStr(d.amount_nano),
+        comment: d.comment,
+        status: d.status,
+        tx_hash: d.tx_hash,
+        created_at: toStr(d.created_at),
+        confirmed_at: toStr(d.confirmed_at),
       })),
     });
   } catch (e) {
@@ -368,7 +386,7 @@ app.post('/api/refund', async (req, res) => {
   }
 });
 
-// Game finish (kept if your UI uses it)
+// Game finish
 app.post('/api/game/finish', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -475,7 +493,6 @@ if (process.env.DISABLE_PG_ADMIN !== '1') {
     }
   });
 
-  // legacy endpoint (no-op now)
   app.post('/api/admin/pg/migrate-from-sqlite', async (req, res) => {
     try {
       mustAdmin(req);
