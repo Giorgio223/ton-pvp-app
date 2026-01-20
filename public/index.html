@@ -1083,11 +1083,12 @@ function renderHistory(el, items, kind){
     if(kind==='dep'){
       row.innerHTML = `<b>${it.amount_ton} TON</b> — <span style="opacity:.9">${it.status}</span>`;
     } else {
-      row.innerHTML = `<b>${it.amount_ton} TON</b> → <span style="opacity:.9">${it.to_address}</span><br><span style="opacity:.85">${it.status}${it.note?(' — '+it.note):''}</span>`;
+      row.innerHTML = `<b>${it.amount_ton} TON</b> — <span style="opacity:.9">${it.status}</span>`;
     }
     el.appendChild(row);
   }
 }
+
 
 async function refreshHistory(){
   if(!sessionToken) return;
