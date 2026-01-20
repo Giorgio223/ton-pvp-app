@@ -150,10 +150,7 @@ app.post('/api/session', async (req, res) => {
 
     const now = Date.now();
 
-    
-const now = Date.now();
-
-// Attach affiliate campaign or referral on first session creation (only once)
+    // Attach affiliate campaign or referral on first session creation (only once)
 const aff = (req.body?.aff || req.query?.aff || "").toString().trim();
 const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
 
