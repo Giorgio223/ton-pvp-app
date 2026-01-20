@@ -147,6 +147,28 @@ export function registerWithdrawRoutes(app) {
     }
   });
 
+
+
+  // USER: my withdrawals (history)
+  app.get('/api/withdraw/mine', async (req, res) => {
+    try {
+      const s = await getSession(req);
+      if (!s) throw new Error('no session');
+
+      const r = await pool.query(
+        `SELECT id,to_address,amount_nano,status,created_at,decided_at,note
+         FROM withdrawals
+         WHERE address=$1
+         ORDER BY created_at DESC
+         LIMIT 50`,
+        [s.address]
+      );
+
+      res.json({ ok: true, withdrawals: r.rows.map(jsonSafe) });
+    } catch (e) {
+      res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
+    }
+  });
   // ADMIN: list withdrawals
   app.get('/api/admin/withdraw/list', async (req, res) => {
     try {

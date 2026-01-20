@@ -17,9 +17,30 @@ export const pool = new Pool({
   connectionString: DATABASE_URL,
 });
 
-export function initDb() {
-  // no-op: schema is applied via pg_schema.sql already
-  return true;
+export async function initDb() {
+  // Auto-create tables required for BONUS + referrals (safe to run on every start)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bonus_claims (
+      id SERIAL PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      last_claim TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS referrals (
+      id SERIAL PRIMARY KEY,
+      referrer_wallet TEXT NOT NULL,
+      referred_wallet TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(referred_wallet)
+    );
+
+    CREATE TABLE IF NOT EXISTS referral_balances (
+      wallet TEXT PRIMARY KEY,
+      balance NUMERIC DEFAULT 0
+    );
+  `);
+
+  console.log('[db] init ok');
 }
 
 export async function ensureUser(address) {

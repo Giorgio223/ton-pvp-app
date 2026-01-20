@@ -65,3 +65,25 @@ CREATE TABLE IF NOT EXISTS game_runs (
 );
 
 CREATE INDEX IF NOT EXISTS game_runs_address_idx ON game_runs(address);
+
+-- ------------------------ BONUS (0.1 TON / 12h) ------------------------
+CREATE TABLE IF NOT EXISTS bonus_claims (
+  address TEXT PRIMARY KEY REFERENCES users(address) ON DELETE CASCADE,
+  last_claim_at BIGINT NOT NULL
+);
+
+-- ------------------------ REFERRALS ------------------------
+-- Each user can be attached to exactly one referrer.
+CREATE TABLE IF NOT EXISTS referrals (
+  user_address TEXT PRIMARY KEY REFERENCES users(address) ON DELETE CASCADE,
+  referrer_address TEXT NOT NULL REFERENCES users(address) ON DELETE CASCADE,
+  created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS referrals_referrer_idx ON referrals(referrer_address);
+
+-- Accumulated referral rewards that user can "claim" to their main balance.
+CREATE TABLE IF NOT EXISTS referral_balances (
+  address TEXT PRIMARY KEY REFERENCES users(address) ON DELETE CASCADE,
+  pending_nano BIGINT NOT NULL DEFAULT 0
+);

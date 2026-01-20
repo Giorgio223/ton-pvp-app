@@ -30,12 +30,12 @@ const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 
 const GAME_ENTRY_TON = Number(process.env.GAME_ENTRY_TON || '0.5');
-const TETRIS_T1 = Number(process.env.TETRIS_T1 || '1000');
-const TETRIS_T2 = Number(process.env.TETRIS_T2 || '2000');
-const TETRIS_T3 = Number(process.env.TETRIS_T3 || '3000');
-const TETRIS_M1 = Number(process.env.TETRIS_M1 || '1');
-const TETRIS_M2 = Number(process.env.TETRIS_M2 || '2');
-const TETRIS_M3 = Number(process.env.TETRIS_M3 || '3');
+const TETRIS_T1 = Number(process.env.TETRIS_T1 || '25000');
+const TETRIS_T2 = Number(process.env.TETRIS_T2 || '50000');
+const TETRIS_T3 = Number(process.env.TETRIS_T3 || '100000');
+const TETRIS_M1 = Number(process.env.TETRIS_M1 || '5');
+const TETRIS_M2 = Number(process.env.TETRIS_M2 || '50');
+const TETRIS_M3 = Number(process.env.TETRIS_M3 || '100');
 
 if (!TREASURY_ADDRESS) {
   console.error('[server] TREASURY_ADDRESS missing in .env');
@@ -45,8 +45,25 @@ if (!TREASURY_ADDRESS) {
 initDb();
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+
+// Dynamic TonConnect manifest (avoids constant manual edits on domain changes)
+app.get('/tonconnect-manifest.json', (req, res) => {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
+  const host = req.get('host');
+  const origin = `${proto}://${host}`;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.json({
+    url: origin,
+    name: 'TON PVP',
+    iconUrl: origin + '/icon.png',
+    termsOfUseUrl: origin,
+    privacyPolicyUrl: origin,
+  });
+});
 
 // ---------- static ----------
 app.use('/', express.static(path.join(__dirname, 'public')));
@@ -125,8 +142,25 @@ app.post('/api/session', async (req, res) => {
 
     await ensureUser(address);
 
-    const token = genId('s_');
     const now = Date.now();
+
+    // Attach referral on first session creation (only once)
+    const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
+    if (ref && ref !== address) {
+      try {
+        await ensureUser(ref);
+        await pool.query(
+          `INSERT INTO referrals(user_address, referrer_address, created_at)
+           VALUES ($1,$2,$3)
+           ON CONFLICT (user_address) DO NOTHING`,
+          [address, ref, now]
+        );
+      } catch (e) {
+        // ignore referral errors to not break login
+      }
+    }
+
+    const token = genId('s_');
 
     await pool.query(
       `INSERT INTO sessions(token,address,created_at,last_seen)
@@ -156,6 +190,170 @@ app.get('/api/me', async (req, res) => {
     });
   } catch (e) {
     jsonError(res, e);
+  }
+});
+
+
+
+// ---------- BONUS (0.1 TON / 12h) ----------
+const BONUS_AMOUNT_TON = Number(process.env.BONUS_AMOUNT_TON || '0.1');
+const BONUS_INTERVAL_HOURS = Number(process.env.BONUS_INTERVAL_HOURS || '12');
+const BONUS_MIN_TOTAL_DEPOSIT_TON = Number(process.env.BONUS_MIN_TOTAL_DEPOSIT_TON || '3');
+
+async function getTotalDepositedNano(address) {
+  const r = await pool.query(
+    `SELECT COALESCE(SUM(delta_nano),0)::bigint AS s
+     FROM ledger
+     WHERE address=$1 AND reason='deposit' AND delta_nano > 0`,
+    [address]
+  );
+  return BigInt(r.rows[0].s);
+}
+
+app.get('/api/bonus/status', async (req, res) => {
+  try {
+    const s = await getSession(req);
+    if (!s) throw new Error('no session');
+
+    const totalDepNano = await getTotalDepositedNano(s.address);
+    const minNano = tonToNanoBig(BONUS_MIN_TOTAL_DEPOSIT_TON);
+    const eligible = totalDepNano >= minNano;
+
+    const r = await pool.query(
+      `SELECT last_claim_at FROM bonus_claims WHERE address=$1`,
+      [s.address]
+    );
+    const last = r.rowCount ? Number(r.rows[0].last_claim_at) : 0;
+    const intervalMs = BONUS_INTERVAL_HOURS * 60 * 60 * 1000;
+    const next = last + intervalMs;
+    const now = Date.now();
+    const can_claim = eligible && (last == 0 || now >= next);
+
+    res.json({
+      ok: true,
+      eligible,
+      total_deposit_ton: nanoToTonStr(totalDepNano),
+      min_required_ton: String(BONUS_MIN_TOTAL_DEPOSIT_TON),
+      bonus_amount_ton: String(BONUS_AMOUNT_TON),
+      interval_hours: BONUS_INTERVAL_HOURS,
+      last_claim_at: last,
+      next_claim_at: can_claim ? now : next,
+      can_claim,
+    });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+app.post('/api/bonus/claim', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const s = await getSession(req);
+    if (!s) throw new Error('no session');
+
+    const totalDepNano = await getTotalDepositedNano(s.address);
+    const minNano = tonToNanoBig(BONUS_MIN_TOTAL_DEPOSIT_TON);
+    if (totalDepNano < minNano) throw new Error('not_eligible');
+
+    const intervalMs = BONUS_INTERVAL_HOURS * 60 * 60 * 1000;
+    const now = Date.now();
+
+    await client.query('BEGIN');
+
+    const r = await client.query(
+      `SELECT last_claim_at FROM bonus_claims WHERE address=$1 FOR UPDATE`,
+      [s.address]
+    );
+    const last = r.rowCount ? Number(r.rows[0].last_claim_at) : 0;
+    const next = last + intervalMs;
+    if (last != 0 && now < next) throw new Error('too_early');
+
+    await client.query(
+      `INSERT INTO bonus_claims(address,last_claim_at)
+       VALUES ($1,$2)
+       ON CONFLICT (address) DO UPDATE SET last_claim_at=EXCLUDED.last_claim_at`,
+      [s.address, now]
+    );
+
+    const amountNano = tonToNanoBig(BONUS_AMOUNT_TON);
+    await client.query(
+      `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [s.address, amountNano.toString(), 'bonus_claim', null, now]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({ ok: true, amount_ton: String(BONUS_AMOUNT_TON), amount_nano: amountNano.toString() });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    jsonError(res, e);
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- REFERRALS ----------
+app.get('/api/referral/status', async (req, res) => {
+  try {
+    const s = await getSession(req);
+    if (!s) throw new Error('no session');
+
+    const inv = await pool.query(
+      `SELECT COUNT(*)::bigint AS c FROM referrals WHERE referrer_address=$1`,
+      [s.address]
+    );
+    const count = BigInt(inv.rows[0].c);
+
+    const bal = await pool.query(
+      `SELECT pending_nano FROM referral_balances WHERE address=$1`,
+      [s.address]
+    );
+    const pending = bal.rowCount ? BigInt(bal.rows[0].pending_nano) : 0n;
+
+    res.json({
+      ok: true,
+      invited_count: count.toString(),
+      pending_nano: pending.toString(),
+      pending_ton: nanoToTonStr(pending),
+    });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+app.post('/api/referral/claim', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const s = await getSession(req);
+    if (!s) throw new Error('no session');
+
+    await client.query('BEGIN');
+    const r = await client.query(
+      `SELECT pending_nano FROM referral_balances WHERE address=$1 FOR UPDATE`,
+      [s.address]
+    );
+    const pending = r.rowCount ? BigInt(r.rows[0].pending_nano) : 0n;
+    if (pending <= 0n) throw new Error('nothing_to_claim');
+
+    await client.query(
+      `UPDATE referral_balances SET pending_nano=0 WHERE address=$1`,
+      [s.address]
+    );
+
+    await client.query(
+      `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [s.address, pending.toString(), 'referral_claim', null, Date.now()]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, claimed_nano: pending.toString(), claimed_ton: nanoToTonStr(pending) });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    jsonError(res, e);
+  } finally {
+    client.release();
   }
 });
 
@@ -442,6 +640,31 @@ app.post('/api/game/finish', async (req, res) => {
          VALUES ($1,$2,$3,$4,$5)`,
         [s.address, rewardNano.toString(), 'tetris_reward', game_run_id, Date.now()]
       );
+    }
+
+    // Referral reward: 10% of bet for the referrer, only when game is finished
+    try {
+      const refR = await client.query(
+        `SELECT referrer_address FROM referrals WHERE user_address=$1`,
+        [s.address]
+      );
+      if (refR.rowCount) {
+        const refAddr = refR.rows[0].referrer_address;
+        if (refAddr && refAddr !== s.address) {
+          const refBonus = betNano / 10n;
+          if (refBonus > 0n) {
+            await client.query(
+              `INSERT INTO referral_balances(address, pending_nano)
+               VALUES ($1,$2)
+               ON CONFLICT (address) DO UPDATE
+               SET pending_nano = referral_balances.pending_nano + EXCLUDED.pending_nano`,
+              [refAddr, refBonus.toString()]
+            );
+          }
+        }
+      }
+    } catch (e) {
+      // ignore referral errors
     }
 
     await client.query('COMMIT');

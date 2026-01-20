@@ -441,7 +441,7 @@
           <span class="balValue" id="balValue">0</span>
           <span class="balPlus" aria-hidden="true">＋</span>
         </button>
-        <button class="balanceBtn" id="btnPvp" type="button">Перейти в PVP режим</button>
+        <button class="balanceBtn" id="btnBonus" type="button">BONUS</button>
       </div>
     </div>
 
@@ -526,47 +526,48 @@
 
 
 
-    <!-- PVP Overlay (демо без сервера: синхронизация через localStorage между вкладками) -->
-    <div class="balOverlay" id="pvpOverlay" aria-hidden="true">
-      <div class="balModal" role="dialog" aria-modal="true" aria-labelledby="pvpTitle">
+
+
+    <!-- BONUS Overlay -->
+    <div class="balOverlay" id="bonusOverlay" aria-hidden="true">
+      <div class="balModal" role="dialog" aria-modal="true" aria-labelledby="bonusTitle">
         <div class="balHead">
-          <div class="balTitle" id="pvpTitle">PVP режим</div>
-          <button class="balClose" id="pvpClose" type="button" aria-label="Закрыть">Закрыть</button>
+          <div class="balTitle" id="bonusTitle">BONUS</div>
+          <button class="balClose" id="bonusClose" type="button" aria-label="Закрыть">Закрыть</button>
         </div>
 
-        <div class="balTabs" role="tablist" aria-label="PVP">
-          <button class="balTab active" id="tabPvpRooms" type="button" role="tab" aria-selected="true">Комнаты</button>
-          <button class="balTab" id="tabPvpCreate" type="button" role="tab" aria-selected="false">Создать</button>
+        <div class="balTabs" role="tablist" aria-label="BONUS">
+          <button class="balTab active" id="tabBonus" type="button" role="tab" aria-selected="true">Бонус</button>
+          <button class="balTab" id="tabRef" type="button" role="tab" aria-selected="false">Рефералы</button>
         </div>
 
         <div class="balBody">
-          <div class="balPane show" id="panePvpRooms" role="tabpanel" aria-labelledby="tabPvpRooms">
-            <p class="balText" style="margin-top:0">Зайди в комнату — и нажмите «Готово» с обеих сторон, чтобы начать игру.</p>
-            <div id="pvpRoomsList" style="display:flex;flex-direction:column;gap:10px"></div>
-            <p class="balNote" style="margin-top:10px">Примечание: это демо PVP без сервера. Для теста можно открыть сайт в двух вкладках на одном домене.</p>
+          <div class="balPane show" id="paneBonus" role="tabpanel" aria-labelledby="tabBonus">
+            <p class="balText" style="margin-top:0">0.1 TON каждые 12 часов для игроков с суммарным депозитом <b>от 3 TON</b>.</p>
+            <div class="balNote" id="bonusStatus"></div>
+            <button class="balPrimary" id="btnBonusClaim" type="button" style="margin-top:10px">Забрать 0.1 TON</button>
+            <p class="balNote" id="bonusNext" style="margin-top:10px"></p>
           </div>
 
-          <div class="balPane" id="panePvpCreate" role="tabpanel" aria-labelledby="tabPvpCreate">
-            <p class="balText" style="margin-top:0">Создай комнату на сумму TON (ставка будет списана с баланса сразу).</p>
-            <div class="balRow">
-              <label class="balField">
-                <span>Сумма (TON)</span>
-                <input id="pvpCreateAmount" inputmode="decimal" placeholder="Напр. 1" />
+          <div class="balPane" id="paneRef" role="tabpanel" aria-labelledby="tabRef">
+            <p class="balText" style="margin-top:0">Приглашай друзей: ты получаешь <b>10%</b> от стоимости каждой <b>запущенной и законченной</b> игры приглашённого.</p>
+
+            <div class="balRow" style="margin-top:10px">
+              <label class="balField" style="width:100%">
+                <span>Твоя реферальная ссылка</span>
+                <input id="refLink" readonly />
               </label>
             </div>
-            <button class="balPrimary" id="btnPvpCreate" type="button">Создать комнату</button>
-            <p class="balNote" id="pvpCreateHint" style="margin-top:10px"></p>
-          </div>
+            <button class="balPrimary" id="btnCopyRef" type="button">Скопировать ссылку</button>
 
-          <div class="balPane" id="panePvpWait" role="tabpanel" aria-labelledby="pvpTitle">
-            <p class="balText" style="margin-top:0;font-weight:950">Ожидание соперника<span id="pvpDots">...</span></p>
-            <p class="balText" id="pvpWaitInfo" style="opacity:.9"></p>
-            <button class="balPrimary" id="btnPvpReady" type="button" style="display:none">Готово</button>
-            <p class="balNote" id="pvpReadyHint" style="margin-top:10px"></p>
+            <div class="balNote" id="refStats" style="margin-top:10px"></div>
+            <button class="balPrimary" id="btnRefClaim" type="button" style="margin-top:10px">Забрать реф. бонус</button>
+            <div class="balNote" id="refClaimHint" style="margin-top:10px"></div>
           </div>
         </div>
       </div>
     </div>
+
     <div class="overlay" id="over">
       <div class="card">
         <h1>Игра окончена</h1>
@@ -593,6 +594,8 @@
 // Если открыть файл напрямую (file://), TonConnect обычно зависает на загрузке.
 let tonConnectUI = null;
 let tonAddress = '';
+const refParam = new URLSearchParams(location.search).get('ref') || '';
+
 
 function shortAddr(a){
   if(!a) return '';
@@ -621,7 +624,7 @@ function setTonBtn(text, disabled=false){
   }
 
   // по умолчанию ищем manifest рядом с приложением
-  const manifestUrl = 'https://lucas-perfect-throws-vcr.trycloudflare.com/tonconnect-manifest.json';
+  const manifestUrl = location.origin + '/tonconnect-manifest.json';
 
   // ВАЖНО: если ты сменишь trycloudflare URL — обнови эту строку и поле "url" в public/tonconnect-manifest.json
   tonConnectUI = new window.TON_CONNECT_UI.TonConnectUI({
@@ -831,324 +834,173 @@ tabWithdraw?.addEventListener('click', ()=>setTab('withdraw'));
 
 document.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape' && balOverlay?.classList.contains('show')) closeBalance();
-  if(e.key === 'Escape' && pvpOverlay?.classList.contains('show')) closePvp();
+  if(e.key === 'Escape' && bonusOverlay?.classList.contains('show')) closeBonus();
 });
 
 
-// ===== PVP UI (демо без сервера)
-const btnPvp = document.getElementById('btnPvp');
-const pvpOverlay = document.getElementById('pvpOverlay');
-const pvpClose = document.getElementById('pvpClose');
-const tabPvpRooms = document.getElementById('tabPvpRooms');
-const tabPvpCreate = document.getElementById('tabPvpCreate');
-const panePvpRooms = document.getElementById('panePvpRooms');
-const panePvpCreate = document.getElementById('panePvpCreate');
-const panePvpWait = document.getElementById('panePvpWait');
-const pvpRoomsList = document.getElementById('pvpRoomsList');
-const pvpCreateAmount = document.getElementById('pvpCreateAmount');
-const btnPvpCreate = document.getElementById('btnPvpCreate');
-const pvpCreateHint = document.getElementById('pvpCreateHint');
-const btnPvpReady = document.getElementById('btnPvpReady');
-const pvpWaitInfo = document.getElementById('pvpWaitInfo');
-const pvpReadyHint = document.getElementById('pvpReadyHint');
+// ===== BONUS UI
+const btnBonus = document.getElementById('btnBonus');
+const bonusOverlay = document.getElementById('bonusOverlay');
+const bonusClose = document.getElementById('bonusClose');
+const tabBonus = document.getElementById('tabBonus');
+const tabRef = document.getElementById('tabRef');
+const paneBonus = document.getElementById('paneBonus');
+const paneRef = document.getElementById('paneRef');
+const bonusStatus = document.getElementById('bonusStatus');
+const btnBonusClaim = document.getElementById('btnBonusClaim');
+const bonusNext = document.getElementById('bonusNext');
 
-const PVP_KEY = 'demo_pvp_rooms_v1';
-let pvpRoomId = null;
-let pvpRole = null; // 'creator' | 'opponent'
-let dotsTimer = null;
+const refLink = document.getElementById('refLink');
+const btnCopyRef = document.getElementById('btnCopyRef');
+const refStats = document.getElementById('refStats');
+const btnRefClaim = document.getElementById('btnRefClaim');
+const refClaimHint = document.getElementById('refClaimHint');
 
-function openPvp(){
-  if(!pvpOverlay) return;
-  // default view
-  pvpRoomId = null;
-  pvpRole = null;
-  setPvpTab('rooms');
-  renderRooms();
-  pvpOverlay.classList.add('show');
-  pvpOverlay.setAttribute('aria-hidden','false');
-  setTimeout(()=>{ pvpClose?.focus?.(); }, 0);
+function openBonus(){
+  if(!bonusOverlay) return;
+  setBonusTab('bonus');
+  bonusOverlay.classList.add('show');
+  bonusOverlay.setAttribute('aria-hidden','false');
+  setTimeout(()=>{ bonusClose?.focus?.(); }, 0);
+  refreshBonusAndRef();
 }
-function closePvp(){
-  if(!pvpOverlay) return;
-  stopDots();
-  pvpOverlay.classList.remove('show');
-  pvpOverlay.setAttribute('aria-hidden','true');
-  pvpCreateHint && (pvpCreateHint.textContent = '');
-  pvpReadyHint && (pvpReadyHint.textContent = '');
+function closeBonus(){
+  if(!bonusOverlay) return;
+  bonusOverlay.classList.remove('show');
+  bonusOverlay.setAttribute('aria-hidden','true');
 }
-function setPvpTab(which){
-  const rooms = which === 'rooms';
-  const create = which === 'create';
-  const wait = which === 'wait';
-
-  tabPvpRooms?.classList.toggle('active', rooms);
-  tabPvpRooms?.setAttribute('aria-selected', rooms ? 'true':'false');
-  tabPvpCreate?.classList.toggle('active', create);
-  tabPvpCreate?.setAttribute('aria-selected', create ? 'true':'false');
-
-  panePvpRooms?.classList.toggle('show', rooms);
-  panePvpCreate?.classList.toggle('show', create);
-  panePvpWait?.classList.toggle('show', wait);
+function setBonusTab(which){
+  const isBonus = which === 'bonus';
+  tabBonus?.classList.toggle('active', isBonus);
+  tabBonus?.setAttribute('aria-selected', isBonus ? 'true':'false');
+  tabRef?.classList.toggle('active', !isBonus);
+  tabRef?.setAttribute('aria-selected', !isBonus ? 'true':'false');
+  paneBonus?.classList.toggle('show', isBonus);
+  paneRef?.classList.toggle('show', !isBonus);
 }
 
-function loadRooms(){
-  try{
-    return JSON.parse(localStorage.getItem(PVP_KEY) || '[]') || [];
-  }catch(e){
-    return [];
-  }
-}
-function saveRooms(rooms){
-  localStorage.setItem(PVP_KEY, JSON.stringify(rooms));
-}
-function fmtTon(v){
-  const n = Math.round(v*100)/100;
-  return (Number.isInteger(n) ? String(n) : String(n).replace('.', ','));
-}
+btnBonus?.addEventListener('click', openBonus);
+bonusClose?.addEventListener('click', closeBonus);
+bonusOverlay?.addEventListener('click', (e)=>{ if(e.target === bonusOverlay) closeBonus(); });
+tabBonus?.addEventListener('click', ()=>setBonusTab('bonus'));
+tabRef?.addEventListener('click', ()=>setBonusTab('ref'));
 
-function renderRooms(){
-  if(!pvpRoomsList) return;
-  const rooms = loadRooms().filter(r => r && r.status !== 'started');
-
-  if(!rooms.length){
-    pvpRoomsList.innerHTML = `<div style="opacity:.8">Комнат пока нет. Создай первую во вкладке «Создать».</div>`;
-    return;
-  }
-
-  const myAddr = tonAddress || 'no_wallet';
-
-  pvpRoomsList.innerHTML = rooms.map(r=>{
-    const isMine = r.creator === myAddr;
-    const full = !!r.opponent;
-    const status = full ? 'Соперник найден' : 'Ожидание';
-    const canJoin = !full && !isMine;
-    const btn = canJoin ? `<button class="balPrimary" data-join="${r.id}" type="button" style="margin-top:10px">Зайти</button>` : `<button class="balPrimary" type="button" data-open="${r.id}" style="margin-top:10px">Открыть</button>`;
-    return `
-      <div style="padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:rgba(0,0,0,.18)">
-        <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
-          <div style="font-weight:1000">Ставка: ${fmtTon(r.amount)} TON</div>
-          <div style="opacity:.85">${status}</div>
-        </div>
-        <div style="margin-top:6px;opacity:.8;font-size:12px">Создатель: ${r.creatorShort || '—'}</div>
-        ${btn}
-      </div>
-    `;
-  }).join('');
-
-  // bind buttons
-  pvpRoomsList.querySelectorAll('button[data-join]').forEach(b=>{
-    b.addEventListener('click', ()=> joinRoom(b.getAttribute('data-join')));
-  });
-  pvpRoomsList.querySelectorAll('button[data-open]').forEach(b=>{
-    b.addEventListener('click', ()=> openRoom(b.getAttribute('data-open')));
-  });
+function fmtTime(ms){
+  if(ms <= 0) return 'сейчас';
+  const s = Math.ceil(ms/1000);
+  const h = Math.floor(s/3600);
+  const m = Math.floor((s%3600)/60);
+  const ss = s%60;
+  if(h>0) return `${h}ч ${m}м`;
+  if(m>0) return `${m}м ${ss}с`;
+  return `${ss}с`;
 }
 
-function openRoom(id){
-  const rooms = loadRooms();
-  const r = rooms.find(x=>x.id===id);
-  if(!r) return;
-  const myAddr = tonAddress || 'no_wallet';
-  if(r.creator === myAddr){
-    pvpRole = 'creator';
-  } else if(r.opponent === myAddr){
-    pvpRole = 'opponent';
-  } else {
-    // spectator -> treat as opponent if slot free
-    if(!r.opponent){
-      joinRoom(id);
-      return;
-    }
-    pvpRole = null;
-  }
-  pvpRoomId = id;
-  showWait(r);
-}
+async function refreshBonusAndRef(){
+  // Referral link is available even before session, but address requires wallet
+  refLink && (refLink.value = tonAddress ? `${location.origin}/?ref=${tonAddress}` : 'Подключи кошелёк, чтобы получить ссылку');
 
-async function createRoom(){
   if(!tonAddress){
-    pvpCreateHint && (pvpCreateHint.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
+    bonusStatus && (bonusStatus.textContent = 'Подключи кошелёк, чтобы проверять бонус.');
+    bonusNext && (bonusNext.textContent = '');
+    btnBonusClaim && (btnBonusClaim.disabled = true);
+    refStats && (refStats.textContent = 'Подключи кошелёк, чтобы видеть статистику.');
+    btnRefClaim && (btnRefClaim.disabled = true);
     return;
   }
-  const v = parseFloat((pvpCreateAmount?.value || '0').replace(',', '.')) || 0;
-  if(v <= 0){
-    pvpCreateHint && (pvpCreateHint.textContent = 'Введи сумму больше 0.');
-    return;
-  }
+
   try{
     await ensureSession();
-    // списываем ставку на сервере (глобально)
-    await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: v, reason: 'pvp_create' })});
-    await refreshMe();
   }catch(e){
-    const code = e?.json?.error || e?.message || 'error';
-    if(code === 'insufficient_balance') pvpCreateHint && (pvpCreateHint.textContent = `Недостаточно TON на балансе. Нужно: ${v}. Пополни баланс.`);
-    else pvpCreateHint && (pvpCreateHint.textContent = `Ошибка: ${code}`);
-    return;
+    // session errors shouldn't break UI
   }
 
-  const id = 'r_' + Math.random().toString(36).slice(2,10);
-  const room = {
-    id,
-    amount: Math.round(v*100)/100,
-    creator: tonAddress,
-    creatorShort: shortAddr(tonAddress),
-    opponent: null,
-    opponentShort: null,
-    creatorReady: false,
-    opponentReady: false,
-    status: 'waiting',
-    createdAt: Date.now()
-  };
-  const rooms = loadRooms();
-  rooms.unshift(room);
-  saveRooms(rooms);
-
-  pvpCreateHint && (pvpCreateHint.textContent = '');
-  pvpRoomId = id;
-  pvpRole = 'creator';
-  showWait(room);
-}
-
-async function joinRoom(id){
-  if(!tonAddress){
-    alert('Сначала подключите TON-кошелёк.');
-    return;
-  }
-  const rooms = loadRooms();
-  const r = rooms.find(x=>x.id===id);
-  if(!r) return;
-  if(r.opponent) { openRoom(id); return; }
+  // Bonus status
   try{
-    await ensureSession();
-    await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: r.amount, reason: 'pvp_join' })});
-    await refreshMe();
-  }catch(e){
-    const code = e?.json?.error || e?.message || 'error';
-    if(code === 'insufficient_balance') alert('Недостаточно TON на балансе для входа в комнату.');
-    else alert('Ошибка: ' + code);
-    return;
-  }
+    const st = await api('/api/bonus/status');
+    if(!st.ok) throw new Error(st.error||'bonus_status_failed');
 
-  r.opponent = tonAddress;
-  r.opponentShort = shortAddr(tonAddress);
-  r.status = 'joined';
-  saveRooms(rooms);
-
-  pvpRoomId = id;
-  pvpRole = 'opponent';
-  showWait(r);
-}
-
-function startDots(){
-  const dotsEl = document.getElementById('pvpDots');
-  if(!dotsEl) return;
-  stopDots();
-  let n = 0;
-  dotsTimer = setInterval(()=>{
-    n = (n+1)%4;
-    dotsEl.textContent = '.'.repeat(n) || '';
-  }, 420);
-}
-function stopDots(){
-  if(dotsTimer){
-    clearInterval(dotsTimer);
-    dotsTimer = null;
-  }
-}
-
-function showWait(room){
-  setPvpTab('wait');
-  startDots();
-  updateWaitView(room);
-}
-
-function updateWaitView(room){
-  if(!room) return;
-  const full = !!room.opponent;
-  const amount = fmtTon(room.amount);
-  const mine = (pvpRole==='creator') ? 'Создатель' : (pvpRole==='opponent' ? 'Участник' : '');
-  pvpWaitInfo && (pvpWaitInfo.textContent = `${mine} • Ставка: ${amount} TON`);
-
-  // show ready only when opponent exists
-  const canReady = full && (pvpRole==='creator' || pvpRole==='opponent');
-  if(btnPvpReady){
-    btnPvpReady.style.display = canReady ? 'block' : 'none';
-  }
-
-  if(!full){
-    pvpReadyHint && (pvpReadyHint.textContent = 'Пока нет соперника. Подождите или откройте страницу во второй вкладке и зайдите в комнату.');
-    return;
-  }
-
-  const c = room.creatorReady ? '✅' : '⏳';
-  const o = room.opponentReady ? '✅' : '⏳';
-  pvpReadyHint && (pvpReadyHint.textContent = `Готовность: создатель ${c} • соперник ${o}`);
-
-  if(room.creatorReady && room.opponentReady){
-    // start game
-    tryStartPvpGame(room);
-  }
-}
-
-function setReady(){
-  if(!pvpRoomId || !pvpRole) return;
-  const rooms = loadRooms();
-  const r = rooms.find(x=>x.id===pvpRoomId);
-  if(!r) return;
-
-  if(pvpRole==='creator') r.creatorReady = true;
-  if(pvpRole==='opponent') r.opponentReady = true;
-
-  // ensure status
-  if(r.opponent) r.status = 'joined';
-  saveRooms(rooms);
-  updateWaitView(r);
-}
-
-function tryStartPvpGame(room){
-  // mark started
-  const rooms = loadRooms();
-  const r = rooms.find(x=>x.id===room.id);
-  if(r){
-    r.status = 'started';
-    saveRooms(rooms);
-  }
-
-  // Start game with bet amount
-  currentBet = room.amount;
-  hideBetPanel();
-  closePvp();
-  gameActive = true;
-  reset();
-}
-
-btnPvp?.addEventListener('click', openPvp);
-pvpClose?.addEventListener('click', closePvp);
-pvpOverlay?.addEventListener('click', (e)=>{ if(e.target === pvpOverlay) closePvp(); });
-tabPvpRooms?.addEventListener('click', ()=>{ setPvpTab('rooms'); stopDots(); renderRooms(); });
-tabPvpCreate?.addEventListener('click', ()=>{ setPvpTab('create'); stopDots(); pvpCreateHint && (pvpCreateHint.textContent=''); });
-btnPvpCreate?.addEventListener('click', createRoom);
-btnPvpReady?.addEventListener('click', setReady);
-
-// update from other tabs
-window.addEventListener('storage', (e)=>{
-  if(e.key !== PVP_KEY) return;
-  if(pvpOverlay?.classList.contains('show')){
-    if(pvpRoomId){
-      const r = loadRooms().find(x=>x.id===pvpRoomId);
-      if(r) updateWaitView(r);
-      else {
-        // room removed
-        setPvpTab('rooms');
-        stopDots();
-        renderRooms();
-      }
-    }else{
-      renderRooms();
+    if(!st.eligible){
+      bonusStatus && (bonusStatus.textContent = `Недоступно. Суммарный депозит: ${st.total_deposit_ton} TON (нужно от ${st.min_required_ton} TON).`);
+    } else {
+      bonusStatus && (bonusStatus.textContent = `Доступно! Суммарный депозит: ${st.total_deposit_ton} TON.`);
     }
+
+    const now = Date.now();
+    const waitMs = (st.can_claim ? 0 : Math.max(0, Number(st.next_claim_at) - now));
+    if(st.can_claim){
+      bonusNext && (bonusNext.textContent = 'Можно забрать бонус сейчас.');
+    } else {
+      bonusNext && (bonusNext.textContent = `Следующий бонус через: ${fmtTime(waitMs)}`);
+    }
+
+    if(btnBonusClaim){
+      btnBonusClaim.disabled = !st.can_claim;
+    }
+  }catch(e){
+    bonusStatus && (bonusStatus.textContent = 'Не удалось получить статус бонуса.');
+    btnBonusClaim && (btnBonusClaim.disabled = true);
+  }
+
+  // Referral status
+  try{
+    const rs = await api('/api/referral/status');
+    const pending = rs.pending_ton || '0';
+    refStats && (refStats.innerHTML = `Приглашено друзей: <b>${rs.invited_count||'0'}</b><br>К получению: <b>${pending} TON</b>`);
+    btnRefClaim && (btnRefClaim.disabled = !(Number(pending.replace(',', '.')) > 0));
+  }catch(e){
+    refStats && (refStats.textContent = 'Не удалось получить статистику по рефералам.');
+    btnRefClaim && (btnRefClaim.disabled = true);
+  }
+}
+
+btnBonusClaim?.addEventListener('click', async ()=>{
+  try{
+    if(!tonAddress) throw new Error('wallet_not_connected');
+    await ensureSession();
+    btnBonusClaim.disabled = true;
+    bonusStatus && (bonusStatus.textContent = 'Забираю бонус...');
+    const r = await api('/api/bonus/claim', { method:'POST', body: JSON.stringify({}) });
+    if(!r.ok) throw new Error(r.error||'claim_failed');
+    await refreshMe();
+    await refreshBonusAndRef();
+  }catch(e){
+    const msg = e?.json?.error || e?.message || 'error';
+    bonusStatus && (bonusStatus.textContent = `Ошибка: ${msg}`);
+    await refreshBonusAndRef();
   }
 });
+
+btnCopyRef?.addEventListener('click', async ()=>{
+  try{
+    const v = refLink?.value || '';
+    if(!v || v.startsWith('Подключи')) return;
+    await navigator.clipboard.writeText(v);
+    refClaimHint && (refClaimHint.textContent = 'Ссылка скопирована.');
+    setTimeout(()=>{ if(refClaimHint) refClaimHint.textContent = ''; }, 1500);
+  }catch{
+    refClaimHint && (refClaimHint.textContent = 'Не удалось скопировать. Скопируй вручную.');
+  }
+});
+
+btnRefClaim?.addEventListener('click', async ()=>{
+  try{
+    if(!tonAddress) throw new Error('wallet_not_connected');
+    await ensureSession();
+    btnRefClaim.disabled = true;
+    refClaimHint && (refClaimHint.textContent = 'Забираю реф. бонус...');
+    const r = await api('/api/referral/claim', { method:'POST', body: JSON.stringify({}) });
+    if(!r.ok) throw new Error(r.error||'claim_failed');
+    await refreshMe();
+    refClaimHint && (refClaimHint.textContent = `Зачислено: ${r.claimed_ton} TON`);
+    await refreshBonusAndRef();
+  }catch(e){
+    const msg = e?.json?.error || e?.message || 'error';
+    refClaimHint && (refClaimHint.textContent = `Ошибка: ${msg}`);
+    await refreshBonusAndRef();
+  }
+});
+
 
 // ===== Global balance (server) + Deposit/Withdraw (не локально)
 const balValueEl = document.getElementById('balValue');
@@ -1225,7 +1077,7 @@ async function ensureSession(){
   const s = await fetch('/api/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: tonAddress })
+    body: JSON.stringify({ address: tonAddress, ref: refParam })
   }).then(r=>r.json());
   if(!s.ok) throw new Error(s.error||'session_failed');
   sessionToken = s.token;
@@ -1447,16 +1299,35 @@ refreshHistory();
     SHAPES[13], // S
   ];
 
-  function newPiece(){
-    let pool;
+  function hardThresholdForScore(sc){
+    // Каждый раунд = 30000 очков (0..29999, 30000..59999, ...)
+    // Цикл из 4 раундов:
+    //  - раунд 1-3: HARD с 20000
+    //  - раунд 4:   HARD с 26000
+    const ROUND_SIZE = 30000;
+    const idx = Math.floor(sc / ROUND_SIZE) % 4; // 0..3
+    return (idx === 3) ? 26000 : 20000;
+  }
 
-    // Режимы по счёту (по твоему ТЗ):
-    // 0–3000: EASY
-    // 3001–25000: NORMAL
-    // 25001+: HARD (только сложные)
-    if(score <= 3000){
+  function newPiece(){
+    // Циклическая сложность (как ты описал):
+    // Каждый "раунд" = 30000 очков.
+    // В каждом раунде:
+    // 0–3000: лёгкие
+    // 3001–HARD_AT: нормальные
+    // HARD_AT–30000: сложные
+    // HARD_AT: первые 3 раунда подряд = 20000, 4-й раунд = 26000, и по кругу.
+    const ROUND_SIZE = 30000;
+    const EASY_MAX = 3000;
+
+    const roundIndex = Math.floor(score / ROUND_SIZE) % 4; // 0..3
+    const hardAt = (roundIndex === 3) ? 26000 : 20000;
+    const localScore = score % ROUND_SIZE;
+
+    let pool;
+    if(localScore <= EASY_MAX){
       pool = EASY_SHAPES;
-    }else if(score <= 25000){
+    }else if(localScore <= hardAt){
       pool = SHAPES;
     }else{
       pool = HARD_SHAPES;
