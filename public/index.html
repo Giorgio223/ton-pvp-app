@@ -898,7 +898,7 @@ function fmtTime(ms){
 
 async function refreshBonusAndRef(){
   // Referral link is available even before session, but address requires wallet
-  refLink && (refLink.value = tonAddress ? `https://t.me/TONTETRIS_BOT?start=ref_${encodeURIComponent(tonAddress)}` : 'Подключи кошелёк, чтобы получить ссылку');
+  refLink && (refLink.value = tonAddress ? `${location.origin}/?ref=${tonAddress}` : 'Подключи кошелёк, чтобы получить ссылку');
 
   if(!tonAddress){
     bonusStatus && (bonusStatus.textContent = 'Подключи кошелёк, чтобы проверять бонус.');
@@ -1170,11 +1170,6 @@ document.getElementById('btnDep')?.addEventListener('click', async ()=>{
     const inv = await api('/api/deposit/create', { method:'POST', body: JSON.stringify({ amount_ton: v }) });
 
     setStatus(depStatusEl, `К оплате: ${inv.amount_ton} TON. ${inv.note || ''} Подтверди транзакцию в кошельке...`);
-
-    // Закрыть панель депозита/баланса, чтобы она не перекрывала окно кошелька
-    try{ closeBalance(); }catch(e){}
-    await new Promise(r=>setTimeout(r, 80));
-
     await tonConnectUI.sendTransaction({
       validUntil: inv.validUntil,
       messages: [{ address: inv.to, amount: inv.amount_nano }]
@@ -1417,7 +1412,7 @@ refreshHistory();
     }
 
     updateScore();
-    if(!hasAnyMove()) gameOver();
+    // game over проверяем в endDrag(), когда фигура уже убрана из available pieces.
   }
 
   function clearLines(){
@@ -1763,12 +1758,16 @@ refreshHistory();
     if(!dragging) return;
     const {piece,idx,valid,snapX,snapY} = dragging;
     if(valid && snapX!=null){
-      place(piece,snapX,snapY);
-      pieces[idx]=null;
-      if(pieces.every(p=>p===null)){
-        refillPieces();
-        if(!hasAnyMove()) gameOver();
-      }
+      // ВАЖНО: сначала убираем фигуру из доступных, потом ставим на поле.
+      // Иначе проверка game over могла видеть "старую" фигуру и думать, что ход ещё есть.
+      pieces[idx] = null;
+      place(piece, snapX, snapY);
+
+      // Если слот-панель опустела — выдаём новую тройку.
+      if (pieces.every(p => p === null)) refillPieces();
+
+      // После хода проверяем, остались ли ходы для ТЕКУЩИХ фигур.
+      if (!hasAnyMove()) gameOver();
     }
     dragging=null;
   }
