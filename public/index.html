@@ -1098,14 +1098,15 @@ async function refreshHistory(){
   if(!sessionToken) return;
   try{
     const d = await api('/api/deposit/mine');
-    renderHistory(depHistoryEl, d.deposits || [], 'dep');
+    const deps = (d.deposits || []).slice(0, 5);
+    renderHistory(depHistoryEl, deps, 'dep');
   }catch(e){ console.warn(e); }
   try{
     const w = await api('/api/withdraw/mine');
-    renderHistory(wdHistoryEl, w.withdrawals || [], 'wd');
+    const wds = (w.withdrawals || []).slice(0, 5);
+    renderHistory(wdHistoryEl, wds, 'wd');
   }catch(e){ console.warn(e); }
 }
-
 async function ensureSession(){
   if(!tonAddress) throw new Error('wallet_not_connected');
   if(sessionToken) return;
