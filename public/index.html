@@ -552,15 +552,10 @@
           <div class="balPane" id="paneRef" role="tabpanel" aria-labelledby="tabRef">
             <p class="balText" style="margin-top:0">Приглашай друзей: ты получаешь <b>10%</b> от стоимости каждой <b>запущенной и законченной</b> игры приглашённого.</p>
 
-            <div class="balRow" style="margin-top:10px">
-              <label class="balField" style="width:100%">
-                <span>Твоя реферальная ссылка</span>
-                <input id="refLink" readonly />
-              </label>
-            </div>
-            <button class="balPrimary" id="btnCopyRef" type="button">Скопировать ссылку</button>
-
-            <div class="balNote" id="refStats" style="margin-top:10px"></div>
+            <div class="balNote" style="margin-top:10px; font-size:13px; line-height:1.35; opacity:.9">
+  По реферальной программе писать менеджеру <b>@gioorgioo</b>
+</div>
+<div class="balNote" id="refStats" style="margin-top:10px"></div>
             <button class="balPrimary" id="btnRefClaim" type="button" style="margin-top:10px">Забрать реф. бонус</button>
             <div class="balNote" id="refClaimHint" style="margin-top:10px"></div>
           </div>
@@ -1098,11 +1093,11 @@ async function refreshHistory(){
   if(!sessionToken) return;
   try{
     const d = await api('/api/deposit/mine');
-    renderHistory(depHistoryEl, d.deposits || [], 'dep');
+    renderHistory(depHistoryEl, (d.deposits || []).slice(0, 5), 'dep');
   }catch(e){ console.warn(e); }
   try{
     const w = await api('/api/withdraw/mine');
-    renderHistory(wdHistoryEl, w.withdrawals || [], 'wd');
+    renderHistory(wdHistoryEl, (w.withdrawals || []).slice(0, 5), 'wd');
   }catch(e){ console.warn(e); }
 }
 
@@ -1170,6 +1165,11 @@ document.getElementById('btnDep')?.addEventListener('click', async ()=>{
     const inv = await api('/api/deposit/create', { method:'POST', body: JSON.stringify({ amount_ton: v }) });
 
     setStatus(depStatusEl, `К оплате: ${inv.amount_ton} TON. ${inv.note || ''} Подтверди транзакцию в кошельке...`);
+
+    // Закрыть панель депозита/баланса, чтобы она не перекрывала окно кошелька
+    try{ closeBalance(); }catch(e){}
+    await new Promise(r=>setTimeout(r, 120));
+
     await tonConnectUI.sendTransaction({
       validUntil: inv.validUntil,
       messages: [{ address: inv.to, amount: inv.amount_nano }]
