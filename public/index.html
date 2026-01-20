@@ -1079,6 +1079,22 @@ async function refreshMe(){
 function renderHistory(el, items, kind){
   if(!el) return;
   el.innerHTML = '';
+  const toTon = (it)=>{
+    const v = it?.amount_ton ?? it?.amountTon ?? it?.ton ?? it?.amount;
+    if(v !== undefined && v !== null && v !== '') return String(v);
+    const n = it?.amount_nano ?? it?.amountNano ?? it?.nano ?? it?.amount_nanos;
+    if(n === undefined || n === null || n === '') return '0';
+    try{
+      const bi = BigInt(String(n));
+      const whole = bi / 1000000000n;
+      const frac = bi % 1000000000n;
+      const fracStr = frac.toString().padStart(9,'0').replace(/0+$/,'');
+      return fracStr ? `${whole.toString()}.${fracStr}` : whole.toString();
+    }catch{
+      return '0';
+    }
+  };
+  const statusStr = (it)=> String(it?.status ?? it?.state ?? it?.result ?? '').toUpperCase() || 'PENDING';
   for(const it of items){
     const row = document.createElement('div');
     row.style.padding = '10px 12px';
@@ -1086,9 +1102,10 @@ function renderHistory(el, items, kind){
     row.style.borderRadius = '14px';
     row.style.background = 'rgba(255,255,255,.06)';
     if(kind==='dep'){
-      row.innerHTML = `<b>${it.amount_ton} TON</b> — <span style="opacity:.9">${it.status}</span>`;
+      row.innerHTML = `<b>${toTon(it)} TON</b> — <span style="opacity:.9">${statusStr(it)}</span>`;
     } else {
-      row.innerHTML = `<b>${it.amount_ton} TON</b> → <span style="opacity:.9">${it.to_address}</span><br><span style="opacity:.85">${it.status}${it.note?(' — '+it.note):''}</span>`;
+      // Withdraw history: show only amount + status (no to_address, no raw tx json)
+      row.innerHTML = `<b>${toTon(it)} TON</b> — <span style="opacity:.9">${statusStr(it)}</span>`;
     }
     el.appendChild(row);
   }
@@ -1098,15 +1115,18 @@ async function refreshHistory(){
   if(!sessionToken) return;
   try{
     const d = await api('/api/deposit/mine');
-    const deps = (d.deposits || []).slice(0, 5);
-    renderHistory(depHistoryEl, deps, 'dep');
+    const depAll = (d.deposits || []).slice();
+    depAll.sort((a,b)=> (b.created_at||b.createdAt||b.ts||b.time||0) - (a.created_at||a.createdAt||a.ts||a.time||0));
+    renderHistory(depHistoryEl, depAll.slice(0,5), 'dep');
   }catch(e){ console.warn(e); }
   try{
     const w = await api('/api/withdraw/mine');
-    const wds = (w.withdrawals || []).slice(0, 5);
-    renderHistory(wdHistoryEl, wds, 'wd');
+    const wdAll = (w.withdrawals || []).slice();
+    wdAll.sort((a,b)=> (b.created_at||b.createdAt||b.ts||b.time||0) - (a.created_at||a.createdAt||a.ts||a.time||0));
+    renderHistory(wdHistoryEl, wdAll.slice(0,5), 'wd');
   }catch(e){ console.warn(e); }
 }
+
 async function ensureSession(){
   if(!tonAddress) throw new Error('wallet_not_connected');
   if(sessionToken) return;
