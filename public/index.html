@@ -1013,13 +1013,48 @@ let sessionToken = localStorage.getItem('session_token') || '';
 
 function setStatus(el, msg){ if(el) el.textContent = msg || ''; }
 
-async function api(path, opts={}){
-  const headers = Object.assign({}, opts.headers || {});
-  if(!(opts.body instanceof FormData) && opts.body && !headers['Content-Type']) headers['Content-Type']='application/json';
-  if(sessionToken) headers['X-Session-Token'] = sessionToken;
-  const res = await fetch(path, Object.assign({}, opts, { headers }));
-  const json = await res.json().catch(()=>({ ok:false, error:'bad_json' }));
-  if(!json.ok) throw Object.assign(new Error(json.error||'api_error'), { json, status: res.status });
+async function api(path, opts = {}) {
+  const method = String(opts.method || 'GET').toUpperCase();
+
+  // Copy opts so we don't mutate the caller object
+  const o = Object.assign({}, opts);
+  const headers = Object.assign({}, o.headers || {});
+
+  let url = path;
+
+  const hasBody = o.body !== undefined && o.body !== null;
+  const isForm = (o.body instanceof FormData);
+
+  // Send sessionToken in the most reliable way:
+  // 1) header X-Session-Token
+  // 2) for GET: add ?token=...
+  // 3) for POST/PUT/PATCH: inject token into JSON body
+  if (sessionToken) {
+    headers['X-Session-Token'] = sessionToken;
+
+    if (method === 'GET') {
+      url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(sessionToken);
+    } else if (hasBody && !isForm) {
+      let obj = {};
+      try {
+        obj = typeof o.body === 'string' ? JSON.parse(o.body) : (o.body || {});
+      } catch {
+        obj = {};
+      }
+      obj.token = sessionToken;
+      o.body = JSON.stringify(obj);
+    } else if (!hasBody && method !== 'GET') {
+      headers['Content-Type'] = 'application/json';
+      o.body = JSON.stringify({ token: sessionToken });
+    }
+  }
+
+  if (!isForm && hasBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(url, Object.assign({}, o, { headers }));
+  const json = await res.json().catch(() => ({ ok: false, error: 'bad_json' }));
+
+  if (!json.ok) throw Object.assign(new Error(json.error || 'api_error'), { json, status: res.status });
   return json;
 }
 
