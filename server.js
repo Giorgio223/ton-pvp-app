@@ -26,7 +26,6 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const PORT = Number(process.env.PORT || '3000');
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS || '').trim();
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
-const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || 'https://icefishing.business').trim();
 
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 
@@ -51,13 +50,12 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 
-// TonConnect manifest (canonical domain; avoids trycloudflare / random hosts)
-// Set PUBLIC_ORIGIN in Render env if you change domain.
+// Dynamic TonConnect manifest (avoids constant manual edits on domain changes)
 app.get('/tonconnect-manifest.json', (req, res) => {
-  const origin = PUBLIC_ORIGIN || 'https://icefishing.business';
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
+  const host = req.get('host');
+  const origin = `${proto}://${host}`;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  // Prevent caching issues in wallets
-  res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.json({
     url: origin,
     name: 'TON PVP',
@@ -65,7 +63,6 @@ app.get('/tonconnect-manifest.json', (req, res) => {
     termsOfUseUrl: origin,
     privacyPolicyUrl: origin,
   });
-});
 });
 
 // ---------- static ----------
@@ -114,6 +111,12 @@ function jsonError(res, e) {
   res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
 }
 
+function requireAdmin(req) {
+  const t = (req.headers['x-admin-token'] || req.query?.admin_token || '').toString().trim();
+  if (!ADMIN_TOKEN || t !== ADMIN_TOKEN) throw new Error('admin_forbidden');
+}
+
+
 // ✅ Convert BigInt safely (JSON cannot serialize BigInt)
 function toStr(v) {
   if (typeof v === 'bigint') return v.toString();
@@ -147,21 +150,50 @@ app.post('/api/session', async (req, res) => {
 
     const now = Date.now();
 
-    // Attach referral on first session creation (only once)
-    const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
-    if (ref && ref !== address) {
-      try {
-        await ensureUser(ref);
+    
+const now = Date.now();
+
+// Attach affiliate campaign or referral on first session creation (only once)
+const aff = (req.body?.aff || req.query?.aff || "").toString().trim();
+const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
+
+// Priority: affiliate (aff_...) over normal referral (ref_...)
+if (aff) {
+  try {
+    const c = await pool.query(
+      `SELECT code, influencer_address, pct, is_active FROM ref_campaigns WHERE code=$1 LIMIT 1`,
+      [aff]
+    );
+    if (c.rowCount && c.rows[0].is_active) {
+      const influencer = c.rows[0].influencer_address;
+      const pct = Math.max(0, Math.min(90, Number(c.rows[0].pct || 0)));
+      if (influencer && influencer !== address && pct > 0) {
+        await ensureUser(influencer);
         await pool.query(
-          `INSERT INTO referrals(user_address, referrer_address, created_at)
-           VALUES ($1,$2,$3)
+          `INSERT INTO affiliate_bindings(user_address, code, influencer_address, pct, created_at)
+           VALUES ($1,$2,$3,$4,$5)
            ON CONFLICT (user_address) DO NOTHING`,
-          [address, ref, now]
+          [address, c.rows[0].code, influencer, pct, now]
         );
-      } catch (e) {
-        // ignore referral errors to not break login
       }
     }
+  } catch (e) {
+    // ignore affiliate errors
+  }
+} else if (ref && ref !== address) {
+  try {
+    await ensureUser(ref);
+    await pool.query(
+      `INSERT INTO referrals(user_address, referrer_address, created_at)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (user_address) DO NOTHING`,
+      [address, ref, now]
+    );
+  } catch (e) {
+    // ignore referral errors
+  }
+}
+}
 
     const token = genId('s_');
 
@@ -645,29 +677,53 @@ app.post('/api/game/finish', async (req, res) => {
       );
     }
 
-    // Referral reward: 10% of bet for the referrer, only when game is finished
+    // Referral / affiliate reward: percent of bet, only when game is finished
     try {
-      const refR = await client.query(
-        `SELECT referrer_address FROM referrals WHERE user_address=$1`,
+      // 1) Affiliate binding (influencer codes) has priority
+      const affR = await client.query(
+        `SELECT influencer_address, pct FROM affiliate_bindings WHERE user_address=$1 LIMIT 1`,
         [s.address]
       );
-      if (refR.rowCount) {
-        const refAddr = refR.rows[0].referrer_address;
-        if (refAddr && refAddr !== s.address) {
-          const refBonus = betNano / 10n;
-          if (refBonus > 0n) {
+      if (affR.rowCount) {
+        const influencer = affR.rows[0].influencer_address;
+        const pct = Math.max(0, Math.min(90, Number(affR.rows[0].pct || 0)));
+        if (influencer && influencer !== s.address && pct > 0) {
+          const bonus = (betNano * BigInt(pct)) / 100n;
+          if (bonus > 0n) {
             await client.query(
               `INSERT INTO referral_balances(address, pending_nano)
                VALUES ($1,$2)
                ON CONFLICT (address) DO UPDATE
                SET pending_nano = referral_balances.pending_nano + EXCLUDED.pending_nano`,
-              [refAddr, refBonus.toString()]
+              [influencer, bonus.toString()]
             );
+          }
+        }
+      } else {
+        // 2) Normal referral 10%
+        const refR = await client.query(
+          `SELECT referrer_address FROM referrals WHERE user_address=$1`,
+          [s.address]
+        );
+        if (refR.rowCount) {
+          const refAddr = refR.rows[0].referrer_address;
+          if (refAddr && refAddr !== s.address) {
+            const refBonus = betNano / 10n;
+            if (refBonus > 0n) {
+              await client.query(
+                `INSERT INTO referral_balances(address, pending_nano)
+                 VALUES ($1,$2)
+                 ON CONFLICT (address) DO UPDATE
+                 SET pending_nano = referral_balances.pending_nano + EXCLUDED.pending_nano`,
+                [refAddr, refBonus.toString()]
+              );
+            }
           }
         }
       }
     } catch (e) {
       // ignore referral errors
+
     }
 
     await client.query('COMMIT');

@@ -594,21 +594,9 @@
 // Если открыть файл напрямую (file://), TonConnect обычно зависает на загрузке.
 let tonConnectUI = null;
 let tonAddress = '';
-// --- Referral param (Telegram Mini App + URL fallback) ---
-const BOT_USERNAME = 'tontetriston_bot'; // без @
-function getReferralParam(){
-  // Telegram Mini App: https://t.me/<bot>?startapp=ref_<address>
-  try{
-    const sp = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-    if(sp && typeof sp === 'string' && sp.startsWith('ref_')) return sp.slice(4);
-  }catch(e){}
-  // обычный сайт: ?ref=<address>
-  try{
-    return new URLSearchParams(location.search).get('ref') || '';
-  }catch(e){}
-  return '';
-}
-let refParam = getReferralParam();
+const refParam = new URLSearchParams(location.search).get('ref') || '';
+
+
 function shortAddr(a){
   if(!a) return '';
   return a.slice(0,4) + '…' + a.slice(-4);
@@ -636,7 +624,7 @@ function setTonBtn(text, disabled=false){
   }
 
   // по умолчанию ищем manifest рядом с приложением
-    const manifestUrl = 'https://icefishing.business/tonconnect-manifest.json?v=4';
+  const manifestUrl = location.origin + '/tonconnect-manifest.json';
 
   // ВАЖНО: если ты сменишь trycloudflare URL — обнови эту строку и поле "url" в public/tonconnect-manifest.json
   tonConnectUI = new window.TON_CONNECT_UI.TonConnectUI({
@@ -713,9 +701,6 @@ function setTonBtn(text, disabled=false){
     closeTonMenu();
   });
 })();
-
-  // Re-read referral param after Telegram WebApp initializes (safe no-op in browser)
-  try{ refParam = getReferralParam(); }catch(e){}
 
 
   // ===== Game config
@@ -913,7 +898,7 @@ function fmtTime(ms){
 
 async function refreshBonusAndRef(){
   // Referral link is available even before session, but address requires wallet
-  refLink && (refLink.value = tonAddress ? `https://t.me/${BOT_USERNAME}?startapp=ref_${encodeURIComponent(tonAddress)}` : 'Подключи кошелёк, чтобы получить ссылку');
+  refLink && (refLink.value = tonAddress ? `${location.origin}/?ref=${tonAddress}` : 'Подключи кошелёк, чтобы получить ссылку');
 
   if(!tonAddress){
     bonusStatus && (bonusStatus.textContent = 'Подключи кошелёк, чтобы проверять бонус.');
@@ -1094,22 +1079,6 @@ async function refreshMe(){
 function renderHistory(el, items, kind){
   if(!el) return;
   el.innerHTML = '';
-  const toTon = (it)=>{
-    const v = it?.amount_ton ?? it?.amountTon ?? it?.ton ?? it?.amount;
-    if(v !== undefined && v !== null && v !== '') return String(v);
-    const n = it?.amount_nano ?? it?.amountNano ?? it?.nano ?? it?.amount_nanos;
-    if(n === undefined || n === null || n === '') return '0';
-    try{
-      const bi = BigInt(String(n));
-      const whole = bi / 1000000000n;
-      const frac = bi % 1000000000n;
-      const fracStr = frac.toString().padStart(9,'0').replace(/0+$/,'');
-      return fracStr ? `${whole.toString()}.${fracStr}` : whole.toString();
-    }catch{
-      return '0';
-    }
-  };
-  const statusStr = (it)=> String(it?.status ?? it?.state ?? it?.result ?? '').toUpperCase() || 'PENDING';
   for(const it of items){
     const row = document.createElement('div');
     row.style.padding = '10px 12px';
@@ -1117,10 +1086,9 @@ function renderHistory(el, items, kind){
     row.style.borderRadius = '14px';
     row.style.background = 'rgba(255,255,255,.06)';
     if(kind==='dep'){
-      row.innerHTML = `<b>${toTon(it)} TON</b> — <span style="opacity:.9">${statusStr(it)}</span>`;
+      row.innerHTML = `<b>${it.amount_ton} TON</b> — <span style="opacity:.9">${it.status}</span>`;
     } else {
-      // Withdraw history: show only amount + status (no to_address, no raw tx json)
-      row.innerHTML = `<b>${toTon(it)} TON</b> — <span style="opacity:.9">${statusStr(it)}</span>`;
+      row.innerHTML = `<b>${it.amount_ton} TON</b> → <span style="opacity:.9">${it.to_address}</span><br><span style="opacity:.85">${it.status}${it.note?(' — '+it.note):''}</span>`;
     }
     el.appendChild(row);
   }
@@ -1130,15 +1098,11 @@ async function refreshHistory(){
   if(!sessionToken) return;
   try{
     const d = await api('/api/deposit/mine');
-    const depAll = (d.deposits || []).slice();
-    depAll.sort((a,b)=> (b.created_at||b.createdAt||b.ts||b.time||0) - (a.created_at||a.createdAt||a.ts||a.time||0));
-    renderHistory(depHistoryEl, depAll.slice(0,5), 'dep');
+    renderHistory(depHistoryEl, d.deposits || [], 'dep');
   }catch(e){ console.warn(e); }
   try{
     const w = await api('/api/withdraw/mine');
-    const wdAll = (w.withdrawals || []).slice();
-    wdAll.sort((a,b)=> (b.created_at||b.createdAt||b.ts||b.time||0) - (a.created_at||a.createdAt||a.ts||a.time||0));
-    renderHistory(wdHistoryEl, wdAll.slice(0,5), 'wd');
+    renderHistory(wdHistoryEl, w.withdrawals || [], 'wd');
   }catch(e){ console.warn(e); }
 }
 
@@ -1148,7 +1112,7 @@ async function ensureSession(){
   const s = await fetch('/api/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: tonAddress, ref: refParam })
+    body: JSON.stringify({ address: tonAddress, ref: refParam, aff: affCode })
   }).then(r=>r.json());
   if(!s.ok) throw new Error(s.error||'session_failed');
   sessionToken = s.token;
