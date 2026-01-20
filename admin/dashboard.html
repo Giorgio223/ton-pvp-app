@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>TON PVP Admin Dashboard</title>
+  <title>TON PVP — Admin Dashboard</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
     .row { display:flex; gap:12px; flex-wrap: wrap; align-items: center; }
@@ -13,19 +13,25 @@
     .muted { color:#666; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
-    th { background:#fafafa; position: sticky; top: 0; }
+    th { background:#fafafa; position: sticky; top: 0; z-index: 1; }
     .pill { display:inline-block; padding:2px 8px; border-radius: 999px; border:1px solid #ddd; font-size:12px; }
     .ok { border-color:#b7e2c1; background:#effaf2; }
     .warn { border-color:#ffd08a; background:#fff7e8; }
     .bad { border-color:#ffb3b3; background:#fff0f0; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .right { text-align:right; }
+    .small { font-size: 12px; }
+    .btn { border:1px solid #ddd; background:#fff; border-radius: 8px; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <h2>Admin Dashboard</h2>
-  <div class="row">
-    <span class="muted">Токен берётся из URL: <span class="mono">?token=...</span></span>
+  <div class="row small">
+    <span class="muted">
+      Открывай так:
+      <span class="mono">/admin/dashboard.html?token=ADMIN777</span>
+    </span>
   </div>
 
   <div class="card">
@@ -37,8 +43,8 @@
         <option value="withdrawals">Withdrawals</option>
       </select>
 
-      <label>Фильтр (адрес содержит):</label>
-      <input id="q" placeholder="0:... или UQ..." style="min-width:320px" />
+      <label>Фильтр (адрес/ID содержит):</label>
+      <input id="q" placeholder="0:... / UQ... / id" style="min-width:320px" />
 
       <label>Статус:</label>
       <select id="status">
@@ -51,8 +57,8 @@
         <option value="processing">processing</option>
       </select>
 
-      <button id="refresh">Обновить</button>
-      <label class="muted"><input type="checkbox" id="auto" checked /> авто (10с)</label>
+      <button class="btn" id="refresh">Обновить</button>
+      <label class="muted small"><input type="checkbox" id="auto" checked /> авто (10с)</label>
     </div>
 
     <div class="row" style="margin-top:10px">
@@ -94,9 +100,12 @@
     return `<span class="${cls}">${s || '-'}</span>`;
   }
 
-  async function apiGet(path) {
+  async function apiGet(path, qs = {}) {
     const url = new URL(path, location.origin);
     if (token) url.searchParams.set('token', token);
+    for (const [k, v] of Object.entries(qs)) {
+      if (v !== undefined && v !== null && String(v).length) url.searchParams.set(k, v);
+    }
     const r = await fetch(url.toString());
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
@@ -121,6 +130,13 @@
     $('tbody').innerHTML = rowsHtml.join('') || `<tr><td class="muted" colspan="${headCells.length}">нет данных</td></tr>`;
   }
 
+  function iso(ms) {
+    if (!ms) return '-';
+    const n = Number(ms);
+    if (!Number.isFinite(n)) return '-';
+    try { return new Date(n).toISOString(); } catch { return '-'; }
+  }
+
   async function load() {
     const tab = $('tab').value;
     const q = $('q').value.trim();
@@ -129,13 +145,7 @@
     $('info').textContent = 'Загрузка...';
 
     if (tab === 'users') {
-      const url = new URL('/api/admin/users', location.origin);
-      if (token) url.searchParams.set('token', token);
-      if (q) url.searchParams.set('q', q);
-      const r = await fetch(url);
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
-
+      const j = await apiGet('/api/admin/users', { q });
       $('info').textContent = `Users: ${j.users.length}`;
       setTable(
         ['Address', 'Balance (TON)', 'Balance (nano)', 'Created'],
@@ -144,7 +154,7 @@
             <td class="mono">${u.address}</td>
             <td>${fmtTonFromNanoStr(u.balance_nano)}</td>
             <td class="mono">${u.balance_nano}</td>
-            <td class="mono">${u.created_at ? new Date(Number(u.created_at)).toISOString() : '-'}</td>
+            <td class="mono">${iso(u.created_at)}</td>
           </tr>
         `)
       );
@@ -152,14 +162,7 @@
     }
 
     if (tab === 'deposits') {
-      const url = new URL('/api/admin/deposits', location.origin);
-      if (token) url.searchParams.set('token', token);
-      if (q) url.searchParams.set('q', q);
-      if (status) url.searchParams.set('status', status);
-      const r = await fetch(url);
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP ' + r.status));
-
+      const j = await apiGet('/api/admin/deposits', { q, status });
       $('info').textContent = `Deposits: ${j.deposits.length}`;
       setTable(
         ['ID', 'User', 'Amount (TON)', 'Status', 'tx_hash', 'created_at', 'confirmed_at', 'comment'],
@@ -170,8 +173,8 @@
             <td>${fmtTonFromNanoStr(d.amount_nano)}</td>
             <td>${pill(d.status)}</td>
             <td class="mono">${d.tx_hash || '-'}</td>
-            <td class="mono">${d.created_at ? new Date(Number(d.created_at)).toISOString() : '-'}</td>
-            <td class="mono">${d.confirmed_at ? new Date(Number(d.confirmed_at)).toISOString() : '-'}</td>
+            <td class="mono">${iso(d.created_at)}</td>
+            <td class="mono">${iso(d.confirmed_at)}</td>
             <td class="mono">${d.comment || '-'}</td>
           </tr>
         `)
@@ -180,9 +183,9 @@
     }
 
     if (tab === 'withdrawals') {
-      // используем существующий endpoint list, а фильтруем на фронте (проще и надёжно)
       const list = await apiGet('/api/admin/withdraw/list');
       let ws = list.withdrawals || [];
+
       if (q) {
         const qq = q.toLowerCase();
         ws = ws.filter(w =>
@@ -203,11 +206,11 @@
             <td class="mono">${w.to_address}</td>
             <td>${fmtTonFromNanoStr(w.amount_nano)}</td>
             <td>${pill(w.status)}</td>
-            <td class="mono">${w.created_at ? new Date(Number(w.created_at)).toISOString() : '-'}</td>
+            <td class="mono">${iso(w.created_at)}</td>
             <td class="mono">${w.note || '-'}</td>
             <td class="right">
-              <button onclick="approve('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Approve</button>
-              <button onclick="reject('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Reject</button>
+              <button class="btn" onclick="approve('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Approve</button>
+              <button class="btn" onclick="reject('${w.id}')" ${w.status !== 'pending' ? 'disabled' : ''}>Reject</button>
             </td>
           </tr>
         `)
@@ -217,7 +220,7 @@
   }
 
   window.approve = async (id) => {
-    if (!confirm('Approve and SEND TON? id=' + id)) return;
+    if (!confirm('Approve и ОТПРАВИТЬ TON? id=' + id)) return;
     try {
       const r = await apiPost('/api/admin/withdraw/approve', { id });
       alert('OK: ' + JSON.stringify(r));
@@ -228,7 +231,7 @@
   };
 
   window.reject = async (id) => {
-    if (!confirm('Reject and REFUND hold? id=' + id)) return;
+    if (!confirm('Reject и ВЕРНУТЬ холд? id=' + id)) return;
     try {
       const r = await apiPost('/api/admin/withdraw/reject', { id });
       alert('OK: ' + JSON.stringify(r));
