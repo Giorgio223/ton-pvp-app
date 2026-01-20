@@ -26,6 +26,7 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 const PORT = Number(process.env.PORT || '3000');
 const TREASURY_ADDRESS = (process.env.TREASURY_ADDRESS || '').trim();
 const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || 'https://icefishing.business').trim();
 
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 
@@ -50,12 +51,13 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 
-// Dynamic TonConnect manifest (avoids constant manual edits on domain changes)
+// TonConnect manifest (canonical domain; avoids trycloudflare / random hosts)
+// Set PUBLIC_ORIGIN in Render env if you change domain.
 app.get('/tonconnect-manifest.json', (req, res) => {
-  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString().split(',')[0].trim();
-  const host = req.get('host');
-  const origin = `${proto}://${host}`;
+  const origin = PUBLIC_ORIGIN || 'https://icefishing.business';
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  // Prevent caching issues in wallets
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
   res.json({
     url: origin,
     name: 'TON PVP',
@@ -63,6 +65,7 @@ app.get('/tonconnect-manifest.json', (req, res) => {
     termsOfUseUrl: origin,
     privacyPolicyUrl: origin,
   });
+});
 });
 
 // ---------- static ----------
