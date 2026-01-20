@@ -43,6 +43,17 @@ if (!TREASURY_ADDRESS) {
 }
 
 initDb();
+(async () => {
+  // Ensure bonus_claims has unique constraint for ON CONFLICT (address)
+  try {
+    await pool.query(`ALTER TABLE bonus_claims ADD COLUMN IF NOT EXISTS address TEXT;`).catch(()=>{});
+    // If old schema used wallet column, copy it once
+    await pool.query(`UPDATE bonus_claims SET address = COALESCE(address, wallet) WHERE address IS NULL AND wallet IS NOT NULL;`).catch(()=>{});
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS bonus_claims_address_uq ON bonus_claims(address);`).catch(()=>{});
+  } catch (e) {
+    console.warn('[db] bonus_claims migrate warning:', e?.message || e);
+  }
+})();
 
 const app = express();
 app.set('trust proxy', 1);
@@ -111,12 +122,6 @@ function jsonError(res, e) {
   res.status(e.status || 400).json({ ok: false, error: e.message || String(e) });
 }
 
-function requireAdmin(req) {
-  const t = (req.headers['x-admin-token'] || req.query?.admin_token || '').toString().trim();
-  if (!ADMIN_TOKEN || t !== ADMIN_TOKEN) throw new Error('admin_forbidden');
-}
-
-
 // ✅ Convert BigInt safely (JSON cannot serialize BigInt)
 function toStr(v) {
   if (typeof v === 'bigint') return v.toString();
@@ -150,47 +155,21 @@ app.post('/api/session', async (req, res) => {
 
     const now = Date.now();
 
-    // Attach affiliate campaign or referral on first session creation (only once)
-const aff = (req.body?.aff || req.query?.aff || "").toString().trim();
-const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
-
-// Priority: affiliate (aff_...) over normal referral (ref_...)
-if (aff) {
-  try {
-    const c = await pool.query(
-      `SELECT code, influencer_address, pct, is_active FROM ref_campaigns WHERE code=$1 LIMIT 1`,
-      [aff]
-    );
-    if (c.rowCount && c.rows[0].is_active) {
-      const influencer = c.rows[0].influencer_address;
-      const pct = Math.max(0, Math.min(90, Number(c.rows[0].pct || 0)));
-      if (influencer && influencer !== address && pct > 0) {
-        await ensureUser(influencer);
+    // Attach referral on first session creation (only once)
+    const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
+    if (ref && ref !== address) {
+      try {
+        await ensureUser(ref);
         await pool.query(
-          `INSERT INTO affiliate_bindings(user_address, code, influencer_address, pct, created_at)
-           VALUES ($1,$2,$3,$4,$5)
+          `INSERT INTO referrals(user_address, referrer_address, created_at)
+           VALUES ($1,$2,$3)
            ON CONFLICT (user_address) DO NOTHING`,
-          [address, c.rows[0].code, influencer, pct, now]
+          [address, ref, now]
         );
+      } catch (e) {
+        // ignore referral errors to not break login
       }
     }
-  } catch (e) {
-    // ignore affiliate errors
-  }
-} else if (ref && ref !== address) {
-  try {
-    await ensureUser(ref);
-    await pool.query(
-      `INSERT INTO referrals(user_address, referrer_address, created_at)
-       VALUES ($1,$2,$3)
-       ON CONFLICT (user_address) DO NOTHING`,
-      [address, ref, now]
-    );
-  } catch (e) {
-    // ignore referral errors
-  }
-}
-}
 
     const token = genId('s_');
 
@@ -674,53 +653,29 @@ app.post('/api/game/finish', async (req, res) => {
       );
     }
 
-    // Referral / affiliate reward: percent of bet, only when game is finished
+    // Referral reward: 10% of bet for the referrer, only when game is finished
     try {
-      // 1) Affiliate binding (influencer codes) has priority
-      const affR = await client.query(
-        `SELECT influencer_address, pct FROM affiliate_bindings WHERE user_address=$1 LIMIT 1`,
+      const refR = await client.query(
+        `SELECT referrer_address FROM referrals WHERE user_address=$1`,
         [s.address]
       );
-      if (affR.rowCount) {
-        const influencer = affR.rows[0].influencer_address;
-        const pct = Math.max(0, Math.min(90, Number(affR.rows[0].pct || 0)));
-        if (influencer && influencer !== s.address && pct > 0) {
-          const bonus = (betNano * BigInt(pct)) / 100n;
-          if (bonus > 0n) {
+      if (refR.rowCount) {
+        const refAddr = refR.rows[0].referrer_address;
+        if (refAddr && refAddr !== s.address) {
+          const refBonus = betNano / 10n;
+          if (refBonus > 0n) {
             await client.query(
               `INSERT INTO referral_balances(address, pending_nano)
                VALUES ($1,$2)
                ON CONFLICT (address) DO UPDATE
                SET pending_nano = referral_balances.pending_nano + EXCLUDED.pending_nano`,
-              [influencer, bonus.toString()]
+              [refAddr, refBonus.toString()]
             );
-          }
-        }
-      } else {
-        // 2) Normal referral 10%
-        const refR = await client.query(
-          `SELECT referrer_address FROM referrals WHERE user_address=$1`,
-          [s.address]
-        );
-        if (refR.rowCount) {
-          const refAddr = refR.rows[0].referrer_address;
-          if (refAddr && refAddr !== s.address) {
-            const refBonus = betNano / 10n;
-            if (refBonus > 0n) {
-              await client.query(
-                `INSERT INTO referral_balances(address, pending_nano)
-                 VALUES ($1,$2)
-                 ON CONFLICT (address) DO UPDATE
-                 SET pending_nano = referral_balances.pending_nano + EXCLUDED.pending_nano`,
-                [refAddr, refBonus.toString()]
-              );
-            }
           }
         }
       }
     } catch (e) {
       // ignore referral errors
-
     }
 
     await client.query('COMMIT');

@@ -898,7 +898,7 @@ function fmtTime(ms){
 
 async function refreshBonusAndRef(){
   // Referral link is available even before session, but address requires wallet
-  refLink && (refLink.value = tonAddress ? `${location.origin}/?ref=${tonAddress}` : 'Подключи кошелёк, чтобы получить ссылку');
+  refLink && (refLink.value = tonAddress ? `https://t.me/TONTETRIS_BOT?start=ref_${encodeURIComponent(tonAddress)}` : 'Подключи кошелёк, чтобы получить ссылку');
 
   if(!tonAddress){
     bonusStatus && (bonusStatus.textContent = 'Подключи кошелёк, чтобы проверять бонус.');
@@ -1112,7 +1112,7 @@ async function ensureSession(){
   const s = await fetch('/api/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: tonAddress, ref: refParam, aff: affCode })
+    body: JSON.stringify({ address: tonAddress, ref: refParam })
   }).then(r=>r.json());
   if(!s.ok) throw new Error(s.error||'session_failed');
   sessionToken = s.token;
@@ -1170,6 +1170,11 @@ document.getElementById('btnDep')?.addEventListener('click', async ()=>{
     const inv = await api('/api/deposit/create', { method:'POST', body: JSON.stringify({ amount_ton: v }) });
 
     setStatus(depStatusEl, `К оплате: ${inv.amount_ton} TON. ${inv.note || ''} Подтверди транзакцию в кошельке...`);
+
+    // Закрыть панель депозита/баланса, чтобы она не перекрывала окно кошелька
+    try{ closeBalance(); }catch(e){}
+    await new Promise(r=>setTimeout(r, 80));
+
     await tonConnectUI.sendTransaction({
       validUntil: inv.validUntil,
       messages: [{ address: inv.to, amount: inv.amount_nano }]
