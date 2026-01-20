@@ -570,7 +570,8 @@
         <p id="finalReward" style="opacity:.9"></p>
         <p style="opacity:.85">Новых ходов нет.</p>
         <div class="row">
-          <button class="primary" id="btnRestart">Заново</button>
+          <button class="primary" id="btnContinue">Продолжить за 0.5 TON</button>
+          <button id="btnFinish">Закончить</button>
           <button id="btnClose">Закрыть</button>
         </div>
       </div>
@@ -706,6 +707,69 @@ function setTonBtn(text, disabled=false){
   const btnStartGame = document.getElementById('btnStartGame');
   let currentBet = 0;
   let currentGameRunId = '';
+    clearSavedRun();
+  const RUN_STORAGE_KEY = 'ton_pvp_run_state_v1';
+
+  function saveRun(){
+    try{
+      if(!currentGameRunId) return;
+      const state = {
+        v: 1,
+        t: Date.now(),
+        game_run_id: currentGameRunId,
+        bet: currentBet,
+        score,
+        gameActive,
+        overShown: over?.classList.contains('show') || false,
+        grid,
+        pieces
+      };
+      localStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(state));
+    }catch(e){}
+  }
+
+  function clearSavedRun(){
+    try{ localStorage.removeItem(RUN_STORAGE_KEY); }catch(e){}
+  }
+
+  function restoreRun(){
+    try{
+      const raw = localStorage.getItem(RUN_STORAGE_KEY);
+      if(!raw) return false;
+      const st = JSON.parse(raw);
+      if(!st || st.v !== 1 || !st.game_run_id) return false;
+      currentGameRunId = String(st.game_run_id);
+      currentBet = Number(st.bet)||0;
+      score = Number(st.score)||0;
+      if(Array.isArray(st.grid)) grid = st.grid;
+      if(Array.isArray(st.pieces)) pieces = st.pieces;
+      updateScore();
+      // если есть хоть один ход — продолжаем/показываем оверлей; иначе оверлей (можно продолжить/закончить)
+      const hasMoveNow = hasAnyMove();
+      if(hasMoveNow){
+        gameActive = true;
+        over.classList.remove('show');
+        hideBetPanel();
+      }else{
+        gameActive = false;
+        over.classList.add('show');
+        finalScore.textContent = score;
+        if(finalReward) finalReward.textContent = '';
+        hideBetPanel();
+      }
+      return true;
+    }catch(e){ return false; }
+  }
+
+  window.addEventListener('beforeunload', ()=>{
+    if(currentGameRunId){
+      // сохраняем только если раунд не закончен (есть ходы или открыт оверлей на 'нет ходов')
+      saveRun();
+    }
+  });
+  window.addEventListener('pagehide', ()=>{
+    if(currentGameRunId) saveRun();
+  });
 
   const N = 8;
 
@@ -1313,7 +1377,7 @@ refreshHistory();
     for(const c of cells){mx=Math.max(mx,c.x);my=Math.max(my,c.y);}
     return {w:mx+1,h:my+1};
   }
-  // Easy pool: очень лёгкие фигуры (0–3000 очков)
+  // Easy pool: очень лёгкие фигуры (0–1500 очков)
   const EASY_SHAPES = [
     SHAPES[0], // 1
     SHAPES[1], // 2
@@ -1324,7 +1388,7 @@ refreshHistory();
     SHAPES[6], // 2x2
   ];
 
-  // Hard pool: только «сложные» фигуры (после 25000+)
+  // Hard pool: только «сложные» фигуры (после 28000+)
   // По твоему ТЗ: L / S / Z / T и похожие.
   const HARD_SHAPES = [
     SHAPES[8],  // L
@@ -1336,30 +1400,18 @@ refreshHistory();
   ];
 
   function hardThresholdForScore(sc){
-    // Каждый раунд = 30000 очков (0..29999, 30000..59999, ...)
-    // Цикл из 4 раундов:
-    //  - раунд 1-3: HARD с 20000
-    //  - раунд 4:   HARD с 26000
-    const ROUND_SIZE = 30000;
-    const idx = Math.floor(sc / ROUND_SIZE) % 4; // 0..3
-    return (idx === 3) ? 26000 : 20000;
+    // Новый порог сложности: HARD после 28000 очков
+    return 28000;
   }
 
   function newPiece(){
-    // Циклическая сложность (как ты описал):
-    // Каждый "раунд" = 30000 очков.
-    // В каждом раунде:
-    // 0–3000: лёгкие
-    // 3001–HARD_AT: нормальные
-    // HARD_AT–30000: сложные
-    // HARD_AT: первые 3 раунда подряд = 20000, 4-й раунд = 26000, и по кругу.
-    const ROUND_SIZE = 30000;
-    const EASY_MAX = 3000;
-
-    const roundIndex = Math.floor(score / ROUND_SIZE) % 4; // 0..3
-    const hardAt = (roundIndex === 3) ? 26000 : 20000;
-    const localScore = score % ROUND_SIZE;
-
+    // Сложность по счёту:
+    // 0–1500: лёгкие
+    // 1501–28000: нормальные
+    // 28001+: сложные
+    const EASY_MAX = 1500;
+    const hardAt = 28000;
+    const localScore = score;
     let pool;
     if(localScore <= EASY_MAX){
       pool = EASY_SHAPES;
@@ -1376,7 +1428,11 @@ refreshHistory();
       id: Math.random().toString(36).slice(2)
     };
   }
-  function refillPieces(){ pieces = [newPiece(), newPiece(), newPiece()]; }
+  function refillPieces(force=false){
+    if(force || pieces.every(p => p === null)){ pieces = [newPiece(), newPiece(), newPiece()]; return; }
+    // если какие-то слоты пустые — заполняем только их
+    for(let i=0;i<pieces.length;i++){ if(pieces[i]===null) pieces[i]=newPiece(); }
+  }
 
   // ===== Rules
   function canPlace(piece,gx,gy){
@@ -1767,8 +1823,11 @@ refreshHistory();
       // Если слот-панель опустела — выдаём новую тройку.
       if (pieces.every(p => p === null)) refillPieces();
 
+      // После хода сохраняем состояние
+      saveRun();
+
       // После хода проверяем, остались ли ходы для ТЕКУЩИХ фигур.
-      if (!hasAnyMove()) gameOver();
+      if (!hasAnyMove()) noMoves();
     }
     dragging=null;
   }
@@ -1806,13 +1865,22 @@ refreshHistory();
   function updateScore(){
     elScore.textContent = score;
   }
-  async function gameOver(){
+    async function noMoves(){
+    // Нет ходов — показываем оверлей и даём возможность продолжить
     gameActive = false;
     finalScore.textContent = score;
     if(finalReward) finalReward.textContent = '';
     over.classList.add('show');
+    // награду считаем только если юзер реально завершит игру (btnFinish / btnRestart / btnClose)
+  }
 
-    // Пэйаут за игру (по порогам): 30k+/50k+/100k+
+  async function finishGame(){
+    // Завершаем раунд и начисляем награду (если достигнуты пороги)
+    gameActive = false;
+    finalScore.textContent = score;
+    if(finalReward) finalReward.textContent = '';
+
+    // Пэйаут за игру (по порогам): 15000+/20000+/25000+/30000+
     if(currentGameRunId){
       try{
         if(finalReward) finalReward.textContent = 'Проверяем награду...';
@@ -1824,17 +1892,69 @@ refreshHistory();
         if(r.multiplier > 0){
           if(finalReward) finalReward.textContent = `Награда: +${r.reward_ton} TON (x${r.multiplier})`;
         }else{
-          if(finalReward) finalReward.textContent = 'Награды нет (нужно 30000+).';
+          if(finalReward) finalReward.textContent = 'Награды нет (нужно 15000+).';
         }
 
         currentGameRunId = '';
+        clearSavedRun();
         await refreshMe();
       }catch(e){
         const msg = e?.json?.error || e?.message || 'error';
         if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
       }
+    }else{
+      clearSavedRun();
     }
   }
+
+  async function continueGame(){
+    const CONTINUE_COST = 0.5;
+    if(!currentGameRunId){
+      // если по какой-то причине нет run id — просто не даём продолжить
+      finalReward && (finalReward.textContent = 'Нельзя продолжить: нет ID раунда.');
+      return;
+    }
+    try{
+      const bal = await getServerBalanceTon();
+      if(bal < CONTINUE_COST){
+        finalReward && (finalReward.textContent = `Недостаточно средств для продолжения. Нужно ${CONTINUE_COST} TON, доступно ${bal}.`);
+        return;
+      }
+
+      finalReward && (finalReward.textContent = 'Списываем 0.5 TON...');
+
+      await api('/api/spend', {
+        method:'POST',
+        body: JSON.stringify({ amount_ton: CONTINUE_COST, reason: 'game_continue', ref: currentGameRunId })
+      });
+
+      await refreshMe();
+
+      // Даем новые фигуры, пока не появится хотя бы один ход (ограничиваем попытки)
+      let tries = 0;
+      do{
+        refillPieces(true); // force replace
+        tries++;
+      }while(!hasAnyMove() && tries < 25);
+
+      if(!hasAnyMove()){
+        // крайний случай: освобождаем 1 клетку
+        for(let t=0;t<10 && !hasAnyMove();t++){
+          const x = (Math.random()*N)|0, y=(Math.random()*N)|0;
+          grid[y][x] = null;
+        }
+      }
+
+      over.classList.remove('show');
+      finalReward && (finalReward.textContent = '');
+      gameActive = true;
+      saveRun();
+    }catch(e){
+      const msg = e?.json?.error || e?.message || 'error';
+      finalReward && (finalReward.textContent = `Продолжение: ошибка (${msg})`);
+    }
+  }
+
   function reset(){
     for(let y=0;y<N;y++) for(let x=0;x<N;x++) grid[y][x]=null;
     score=0; combo=0;
@@ -1901,11 +2021,16 @@ refreshHistory();
     hideBetPanel();
     gameActive = true;
     reset();
+    saveRun();
   });
 
   document.getElementById('btnNew').addEventListener('click', resetToBet);
-  document.getElementById('btnRestart').addEventListener('click', resetToBet);
-  document.getElementById('btnClose').addEventListener('click', ()=>over.classList.remove('show'));
+
+  // Нет ходов: продолжить / закончить
+  document.getElementById('btnContinue')?.addEventListener('click', continueGame);
+  document.getElementById('btnFinish')?.addEventListener('click', async ()=>{ await finishGame(); resetToBet(); });
+  document.getElementById('btnRestart')?.addEventListener('click', async ()=>{ await finishGame(); resetToBet(); });
+  document.getElementById('btnClose')?.addEventListener('click', async ()=>{ await finishGame(); resetToBet(); });
 
   // ===== Seed: a few blocks
   // so it doesn't look empty (optional)
@@ -1921,9 +2046,14 @@ refreshHistory();
   }
 
   // Init
-  refillPieces();
-  // seed(); // если хочешь пустое поле как на скрине — оставь выключенным
-  updateScore();
+  if(!restoreRun()){
+    refillPieces();
+    // seed(); // если хочешь пустое поле как на скрине — оставь выключенным
+    updateScore();
+  }else{
+    // восстановили раунд — подтянем баланс/профиль
+    refreshMe().catch(()=>{});
+  }
 
   // Loop
   let last=performance.now();

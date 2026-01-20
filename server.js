@@ -30,12 +30,16 @@ const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 
 const GAME_ENTRY_TON = Number(process.env.GAME_ENTRY_TON || '0.5');
-const TETRIS_T1 = Number(process.env.TETRIS_T1 || '25000');
-const TETRIS_T2 = Number(process.env.TETRIS_T2 || '50000');
-const TETRIS_T3 = Number(process.env.TETRIS_T3 || '100000');
-const TETRIS_M1 = Number(process.env.TETRIS_M1 || '5');
-const TETRIS_M2 = Number(process.env.TETRIS_M2 || '50');
-const TETRIS_M3 = Number(process.env.TETRIS_M3 || '100');
+const TETRIS_T1 = Number(process.env.TETRIS_T1 || '15000');
+const TETRIS_T2 = Number(process.env.TETRIS_T2 || '20000');
+const TETRIS_T3 = Number(process.env.TETRIS_T3 || '25000');
+const TETRIS_T4 = Number(process.env.TETRIS_T4 || '30000');
+
+const TETRIS_M1 = Number(process.env.TETRIS_M1 || '4');   // x4 at 15000+
+const TETRIS_M2 = Number(process.env.TETRIS_M2 || '10');  // x10 at 20000+
+const TETRIS_M3 = Number(process.env.TETRIS_M3 || '50');  // x50 at 25000+
+const TETRIS_M4 = Number(process.env.TETRIS_M4 || '100'); // x100 at 30000+
+
 
 if (!TREASURY_ADDRESS) {
   console.error('[server] TREASURY_ADDRESS missing in .env');
@@ -551,6 +555,9 @@ app.post('/api/spend', async (req, res) => {
     const amountNano = tonToNanoBig(amtAny);
     const why = (req.body?.reason || 'spend').toString();
 
+    const refAny = (req.body?.ref ?? req.body?.game_run_id ?? null);
+    const ref = refAny ? String(refAny) : null;
+
     await client.query('BEGIN');
 
     const balR = await client.query(
@@ -563,11 +570,21 @@ app.post('/api/spend', async (req, res) => {
     await client.query(
       `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
        VALUES ($1,$2,$3,$4,$5)`,
-      [s.address, (-amountNano).toString(), why, null, Date.now()]
+      [s.address, (-amountNano).toString(), why, ref, Date.now()]
     );
 
-    await client.query('COMMIT');
-    res.json({ ok: true, spent_ton: amtNum, spent_nano: amountNano.toString() });
+    
+    let gameRunId = null;
+    if (why === 'game_start') {
+      gameRunId = crypto.randomBytes(16).toString('hex');
+      await client.query(
+        `INSERT INTO game_runs(id, address, bet_nano, status, started_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [gameRunId, s.address, amountNano.toString(), 'active', Date.now()]
+      );
+    }
+await client.query('COMMIT');
+    res.json({ ok: true, spent_ton: amtNum, spent_nano: amountNano.toString(), game_run_id: gameRunId });
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     jsonError(res, e);
@@ -631,7 +648,8 @@ app.post('/api/game/finish', async (req, res) => {
     }
 
     let multiplier = 0;
-    if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
+    if (sc >= TETRIS_T4) multiplier = TETRIS_M4;
+    else if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
     else if (sc >= TETRIS_T2) multiplier = TETRIS_M2;
     else if (sc >= TETRIS_T1) multiplier = TETRIS_M1;
 
@@ -744,7 +762,7 @@ if (process.env.DISABLE_PG_ADMIN !== '1') {
 app.listen(PORT, () => {
   console.log(`SERVER OK http://localhost:${PORT}`);
   console.log(`[server] treasury: ${TREASURY_ADDRESS}`);
-  console.log(`[server] GAME_ENTRY_TON=${GAME_ENTRY_TON} thresholds: ${TETRIS_T1}/${TETRIS_T2}/${TETRIS_T3}`);
+  console.log(`[server] GAME_ENTRY_TON=${GAME_ENTRY_TON} thresholds: ${TETRIS_T1}/${TETRIS_T2}/${TETRIS_T3}/${TETRIS_T4}`);
 });
 
 // Run poller inside the same service (optional)
