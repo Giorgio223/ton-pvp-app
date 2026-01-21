@@ -48,6 +48,7 @@
       -webkit-tap-highlight-color: transparent;
     }
     .hud{
+  z-index: 1000;
       position:absolute; left:14px; right:14px; top:max(12px, env(safe-area-inset-top));
       display:flex; align-items:center; justify-content:space-between;
       pointer-events:none;
@@ -55,7 +56,6 @@
       text-shadow:0 10px 22px rgba(0,0,0,.55);
       font-weight:900;
       letter-spacing:.4px;
-      z-index:950;
     }
     .pill{
       pointer-events:auto;
@@ -421,23 +421,23 @@
       opacity:.75;
       line-height:1.25;
     }
-    .freePrice{ color:#fff; }
 
   /* Promo banner */
+/* Promo banner ABOVE HUD */
 .promoBanner{
-  position:absolute;
+  position:fixed;
   left:50%;
   transform:translateX(-50%);
-  top: calc(max(12px, env(safe-area-inset-top)) + 54px); /* ниже HUD */
-  z-index: 800; /* ниже HUD, чтобы не перекрывать счёт */
+  top: 8px;                 /* ВЫШЕ HUD */
+  z-index: 1200;            /* выше HUD */
   pointer-events:none;
   color:#fff;
   width: min(720px, calc(100% - 28px));
   text-align:center;
   font-weight: 950;
-  font-size: 22px;
+  font-size: 20px;
   letter-spacing: .3px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(255,72,208,.18), rgba(85,107,255,.18));
   border: 1px solid rgba(255,255,255,.16);
@@ -446,8 +446,26 @@
 }
 .promoBanner b{ font-size: 26px; }
 @media (max-width:520px){
-  .promoBanner{ font-size:18px; }
-  .promoBanner b{ font-size:22px; }
+  /* Promo banner ABOVE HUD */
+.promoBanner{
+  position:fixed;
+  left:50%;
+  transform:translateX(-50%);
+  top: 8px;                 /* ВЫШЕ HUD */
+  z-index: 1200;            /* выше HUD */
+  pointer-events:none;
+  color:#fff;
+  width: min(720px, calc(100% - 28px));
+  text-align:center;
+  font-weight: 950;
+  font-size: 20px;
+  letter-spacing: .3px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255,72,208,.18), rgba(85,107,255,.18));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 16px 45px rgba(0,0,0,.35);
+  backdrop-filter: blur(10px);
 }
   .promoBanner b{ font-size:22px; }
 }
@@ -497,7 +515,7 @@
       <div class="betRow">
         <div class="betField" style="flex:1 1 260px">
           <span>Стоимость запуска</span>
-          <div class="freePrice" style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">Бесплатно</div>
+          <div style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">Бесплатно</div>
         </div>
         <button class="betStart" id="btnStartGame" type="button">Запустить игру</button>
       </div>
