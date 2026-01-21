@@ -2011,10 +2011,10 @@ async function gameOver(kind='loss'){
 btnStartGame?.addEventListener('click', async ()=>{
   const v = START_COST;
 
-  // require wallet connection (future withdrawals go to connected address)
+  // Wallet is OPTIONAL for free start.
+  // If wallet is not connected — we will play as a guest session (can be migrated later).
   if(!tonAddress){
-    betHintEl && (betHintEl.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
-    return;
+    betHintEl && (betHintEl.textContent = 'Можно играть без кошелька (гостевой режим). Для вывода — подключи Ton Connect Wallet.' );
   }
 
   try{

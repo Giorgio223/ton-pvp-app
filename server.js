@@ -177,29 +177,6 @@ app.post('/api/session', async (req, res) => {
           // Drop guest session token to avoid re-using it
           await pool.query('DELETE FROM sessions WHERE token=$1', [guestToken]);
         }
-    
-
-// Create guest session (for free play without wallet connection)
-// NOTE: guest address has prefix "guest:" and can later be migrated to a real wallet via /api/session (guest_token)
-app.post('/api/guest-session', async (req, res) => {
-  try {
-    const guestAddress = 'guest:' + crypto.randomUUID();
-    await ensureUser(guestAddress);
-
-    const now = Date.now();
-    const token = genId('g_');
-
-    await pool.query(
-      `INSERT INTO sessions(token,address,created_at,last_seen)
-       VALUES ($1,$2,$3,$4)`,
-      [token, guestAddress, now, now]
-    );
-
-    res.json({ ok: true, token, address: guestAddress, guest: true });
-  } catch (e) {
-    jsonError(res, e);
-  }
-});
 
   } catch (e) {
         // ignore migrate errors
@@ -236,6 +213,31 @@ app.post('/api/guest-session', async (req, res) => {
     jsonError(res, e);
   }
 });
+
+    
+
+// Create guest session (for free play without wallet connection)
+// NOTE: guest address has prefix "guest:" and can later be migrated to a real wallet via /api/session (guest_token)
+app.post('/api/guest-session', async (req, res) => {
+  try {
+    const guestAddress = 'guest:' + crypto.randomUUID();
+    await ensureUser(guestAddress);
+
+    const now = Date.now();
+    const token = genId('g_');
+
+    await pool.query(
+      `INSERT INTO sessions(token,address,created_at,last_seen)
+       VALUES ($1,$2,$3,$4)`,
+      [token, guestAddress, now, now]
+    );
+
+    res.json({ ok: true, token, address: guestAddress, guest: true });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
 
 // Me / balance
 app.get('/api/me', async (req, res) => {
@@ -637,8 +639,6 @@ app.post('/api/game/start', async (req, res) => {
         [s.address, (-betNano).toString(), 'game_start', null, Date.now()]
       );
     }
-
-    const crypto = require('crypto');
     const gameRunId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
 
     await client.query(
