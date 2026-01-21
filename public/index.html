@@ -572,7 +572,6 @@
         <p id="continueHint" style="opacity:.85; display:none; margin-top:10px"></p>
         <div class="row">
           <button class="primary" id="btnContinue" style="display:none">Продолжить за 0.5 TON</button>
-          <button class="primary" id="btnTakeWin" style="display:none">Забрать выигрыш и закончить</button>
           <button class="primary" id="btnRestart">Заново</button>
           <button id="btnClose">Закрыть</button>
         </div>
@@ -793,7 +792,6 @@ window.addEventListener('resize', ()=>{ layout(); });
   const finalReward = document.getElementById('finalReward');
   const overReason = document.getElementById('overReason');
   const btnContinue = document.getElementById('btnContinue');
-  const btnTakeWin = document.getElementById('btnTakeWin');
   const continueHint = document.getElementById('continueHint');
 
   // режим оверлея: finished | continueOffer
@@ -1910,41 +1908,39 @@ refreshHistory();
   }
 
   async function finishGameAndShowOver(){
-    overMode = 'continueOffer';
+    overMode = 'finished';
     gameActive = false;
     finalScore.textContent = score;
     if(finalReward) finalReward.textContent = '';
     if(overReason) overReason.textContent = 'Новых ходов нет.';
     try{ document.getElementById('btnRestart')?.textContent = 'Заново'; }catch(_){ }
     if(continueHint){ continueHint.style.display = 'none'; continueHint.textContent=''; }
-
-    // по умолчанию предлагаем продолжение
-    if(btnContinue){ btnContinue.style.display = 'inline-flex'; btnContinue.disabled=false; btnContinue.style.opacity=1; }
-    if(btnTakeWin) btnTakeWin.style.display = 'none';
-
+    if(btnContinue) btnContinue.style.display = 'none';
     over.classList.add('show');
 
-    // Если игрок уже в призовом диапазоне — показываем «забрать выигрыш».
+    // Пэйаут за игру (по порогам): 30k+/50k+/100k+
     if(currentGameRunId){
       try{
-        const q = await api('/api/game/quote', {
+        if(finalReward) finalReward.textContent = 'Проверяем награду...';
+        const r = await api('/api/game/finish', {
           method:'POST',
           body: JSON.stringify({ game_run_id: currentGameRunId, score })
         });
 
-        if(q?.prize){
-          if(overReason) overReason.textContent = 'Поздравляю! Ты в призовом диапазоне.';
-          if(finalReward) finalReward.textContent = 'Можешь продолжить игру или забрать выигрыш и завершить.';
-          if(btnTakeWin) btnTakeWin.style.display = 'inline-flex';
+        if(r.multiplier > 0){
+          if(finalReward) finalReward.textContent = `Награда: +${r.reward_ton} TON (x${r.multiplier})`;
         }else{
-          // не призовой — ничего не меняем
+          if(finalReward) finalReward.textContent = 'Награды нет (нужно 30000+).';
         }
-      }catch(_e){
-        // тихо игнорируем, чтобы не ломать оверлей
+
+        currentGameRunId = '';
+        await refreshMe();
+      }catch(e){
+        const msg = e?.json?.error || e?.message || 'error';
+        if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
       }
     }
   }
-
 
   async function gameOver(){
     // Старый интерфейс оставляем как фолбек
@@ -2077,7 +2073,6 @@ refreshHistory();
       over.classList.remove('show');
       if(continueHint){ continueHint.style.display='none'; continueHint.textContent=''; }
       if(btnContinue){ btnContinue.style.display='none'; btnContinue.disabled=false; btnContinue.style.opacity=1; }
-      if(btnTakeWin){ btnTakeWin.style.display='none'; }
 
       gameActive = true;
     }catch(e){
@@ -2086,46 +2081,7 @@ refreshHistory();
       btnContinue.disabled = false;
       btnContinue.style.opacity = 1;
     }
-  })
-
-  btnTakeWin?.addEventListener('click', async ()=>{
-    if(!btnTakeWin) return;
-    btnTakeWin.disabled = true;
-    btnTakeWin.style.opacity = .75;
-    try{
-      if(finalReward) finalReward.textContent = 'Зачисляем выигрыш...';
-      await ensureSession();
-
-      if(!currentGameRunId){
-        throw new Error('no game_run_id');
-      }
-
-      const r = await api('/api/game/finish', {
-        method:'POST',
-        body: JSON.stringify({ game_run_id: currentGameRunId, score })
-      });
-
-      if(r.multiplier > 0){
-        if(finalReward) finalReward.textContent = `Награда зачислена: +${r.reward_ton} TON (x${r.multiplier})`;
-      }else{
-        if(finalReward) finalReward.textContent = 'Награды нет.';
-      }
-
-      currentGameRunId = '';
-      await refreshMe();
-
-      // после получения — продолжаем не даём, только перезапуск/закрыть
-      if(btnContinue) btnContinue.style.display = 'none';
-    if(btnTakeWin) btnTakeWin.style.display = 'none';
-      if(btnTakeWin){ btnTakeWin.style.display = 'none'; btnTakeWin.disabled=false; btnTakeWin.style.opacity=1; }
-      if(overReason) overReason.textContent = 'Игра завершена.';
-    }catch(e){
-      const msg = e?.json?.error || e?.message || 'error';
-      if(finalReward) finalReward.textContent = `Ошибка начисления: ${msg}`;
-      if(btnTakeWin){ btnTakeWin.disabled=false; btnTakeWin.style.opacity=1; }
-    }
   });
-;
   document.getElementById('btnClose').addEventListener('click', ()=>{
     if(overMode === 'continueOffer'){
       // "Закрыть" = закончить игру (с начислением награды, если положена)

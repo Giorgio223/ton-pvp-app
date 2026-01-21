@@ -36,8 +36,6 @@ const TETRIS_T3 = Number(process.env.TETRIS_T3 || '100000');
 const TETRIS_M1 = Number(process.env.TETRIS_M1 || '5');
 const TETRIS_M2 = Number(process.env.TETRIS_M2 || '50');
 const TETRIS_M3 = Number(process.env.TETRIS_M3 || '100');
-const TEST_M1_MIN = Number(process.env.TEST_M1_MIN || '1000');
-const TEST_M1_MAX = Number(process.env.TEST_M1_MAX || '10000');
 
 if (!TREASURY_ADDRESS) {
   console.error('[server] TREASURY_ADDRESS missing in .env');
@@ -105,13 +103,6 @@ function nanoToTonStr(nano) {
   const whole = abs / 1000000000n;
   const frac = (abs % 1000000000n).toString().padStart(9, '0').replace(/0+$/, '');
   return sign + whole.toString() + (frac ? '.' + frac : '');
-}
-
-function randIntInclusive(min, max) {
-  const a = Math.ceil(Number(min));
-  const b = Math.floor(Number(max));
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return a;
-  return Math.floor(Math.random() * (b - a + 1)) + a;
 }
 
 function genId(prefix = '') {
@@ -605,68 +596,6 @@ app.post('/api/refund', async (req, res) => {
 });
 
 // Game finish
-
-// Quote potential reward without finishing the game run (no ledger changes).
-app.post('/api/game/quote', async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const s = await getSession(req);
-    if (!s) throw new Error('no session');
-
-    const game_run_id = (req.body?.game_run_id || '').toString();
-    if (!game_run_id) throw new Error('game_run_id required');
-
-    const sc = Number(req.body?.score);
-    if (!Number.isFinite(sc) || sc < 0) throw new Error('bad score');
-
-    const runR = await client.query(
-      `SELECT * FROM game_runs WHERE id=$1`,
-      [game_run_id]
-    );
-    if (!runR.rowCount) throw new Error('game not found');
-    const run = runR.rows[0];
-    if (run.address !== s.address) throw new Error('forbidden');
-
-    // If already finished — return the stored reward.
-    if (run.status === 'finished') {
-      const betNano = BigInt(run.bet_nano);
-      const rewardNano = BigInt(run.reward_nano || 0);
-      // Multiplier here is informational; compute only if bet>0.
-      const mult = betNano > 0n ? Number(rewardNano / betNano) : 0;
-      return res.json({
-        ok: true,
-        finished: true,
-        multiplier: mult,
-        reward_ton: rewardNano ? Number(nanoToTonStr(rewardNano)) : 0,
-        reward_nano: String(rewardNano),
-        score: run.score ?? sc
-      });
-    }
-
-    let multiplier = 0;
-    if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
-    else if (sc >= TETRIS_T2) multiplier = TETRIS_M2;
-    else if (sc >= TETRIS_T1) multiplier = 1; // prize-range marker (exact multiplier is assigned on finish for tier-1 testing)
-
-    const betNano = BigInt(run.bet_nano);
-    const rewardNano = multiplier > 0 ? betNano * BigInt(multiplier) : 0n;
-
-    return res.json({
-      ok: true,
-      finished: false,
-      prize: multiplier > 0,
-      multiplier,
-      reward_ton: rewardNano ? Number(nanoToTonStr(rewardNano)) : 0,
-      reward_nano: String(rewardNano),
-      score: Math.trunc(sc)
-    });
-  } catch (e) {
-    res.status(400).json({ ok: false, error: e?.message || 'error' });
-  } finally {
-    client.release();
-  }
-});
-
 app.post('/api/game/finish', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -704,7 +633,7 @@ app.post('/api/game/finish', async (req, res) => {
     let multiplier = 0;
     if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
     else if (sc >= TETRIS_T2) multiplier = TETRIS_M2;
-    else if (sc >= TETRIS_T1) multiplier = randIntInclusive(TEST_M1_MIN, TEST_M1_MAX);
+    else if (sc >= TETRIS_T1) multiplier = TETRIS_M1;
 
     const betNano = BigInt(run.bet_nano);
     const rewardNano = multiplier > 0 ? betNano * BigInt(multiplier) : 0n;
