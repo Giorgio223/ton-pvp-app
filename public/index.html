@@ -421,6 +421,27 @@
       line-height:1.25;
     }
 
+  /* Promo banner */
+.promoBanner{
+  margin: 10px auto 0;
+  width: min(720px, calc(100% - 28px));
+  text-align:center;
+  font-weight: 950;
+  font-size: 22px;
+  letter-spacing: .3px;
+  padding: 10px 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255,72,208,.18), rgba(85,107,255,.18));
+  border: 1px solid rgba(255,255,255,.16);
+  box-shadow: 0 16px 45px rgba(0,0,0,.35);
+  backdrop-filter: blur(10px);
+}
+.promoBanner b{ font-size: 26px; }
+@media (max-width:520px){
+  .promoBanner{ font-size:18px; }
+  .promoBanner b{ font-size:22px; }
+}
+
   </style>
 
 </head>
@@ -453,6 +474,8 @@
       <button class="btn" id="btnNew">Новая</button>
     </div>
 
+    <div class="promoBanner">Набери <b>10000</b> — получи <b>2.5 TON</b> на баланс</div>
+
     <div class="combo" id="combo"><span class="word">Combo</span><span class="num" id="comboNum">2</span></div>
 
     <canvas id="c" width="720" height="820" aria-label="Neon Block Puzzle"></canvas>
@@ -464,10 +487,11 @@
       <div class="betRow">
         <div class="betField" style="flex:1 1 260px">
           <span>Стоимость запуска</span>
-          <div style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">0.5 TON</div>
+          <div style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">Бесплатно</div>
         </div>
         <button class="betStart" id="btnStartGame" type="button">Запустить игру</button>
       </div>
+      <div class="betHint" style="opacity:.95">Продолжение после слива: <b>0.5 TON</b></div>
       <div class="betHint" id="betHint"></div>
     </div>
 <!-- Balance Modal -->
@@ -565,12 +589,12 @@
 
     <div class="overlay" id="over">
       <div class="card">
-        <h1>Игра окончена</h1>
+        <h1 id="overTitle">Игра окончена</h1>
         <p>Счёт: <b id="finalScore">0</b></p>
         <p id="finalReward" style="opacity:.9"></p>
-        <p style="opacity:.85">Новых ходов нет.</p>
+        <p id="overHint" style="opacity:.85">Новых ходов нет.</p>
         <div class="row">
-          <button class="primary" id="btnContinue" title="Продолжить игру за 0.5 TON">Продолжить за 0.5 TON</button>
+          <button class="primary" id="btnContinue" title="Продолжить игру за 0.5 TON (только при сливе)">Продолжить за 0.5 TON</button>
           <button class="primary" id="btnRestart">Заново</button>
           <button id="btnClose">Закрыть</button>
         </div>
@@ -702,7 +726,9 @@ function setTonBtn(text, disabled=false){
   // ===== Game config
   let gameActive = false;
   const betPanel = document.getElementById('betPanel');
-  const START_BET = 0.5;
+  const START_COST = 0;
+  const CONTINUE_COST = 0.5;
+  const WIN_THRESHOLD = 10000;
   const betHintEl = document.getElementById('betHint');
   const btnStartGame = document.getElementById('btnStartGame');
   let currentBet = 0;
@@ -1415,6 +1441,11 @@ refreshHistory();
     }
 
     updateScore();
+
+    // WIN condition: if score reaches the threshold — finish the game and credit 2.5 TON
+    if(gameActive && score >= WIN_THRESHOLD){
+      gameOver('win');
+    }
     // game over проверяем в endDrag(), когда фигура уже убрана из available pieces.
   }
 
@@ -1859,37 +1890,58 @@ refreshHistory();
     return out;
   }
 
-  async function gameOver(){
-    gameActive = false;
-    finalScore.textContent = score;
-    if(finalReward) finalReward.textContent = '';
-    over.classList.add('show');
+  async function finishRunAndCredit(){
+  if(!currentGameRunId) return;
+  try{
+    if(finalReward) finalReward.textContent = 'Проверяем награду...';
+    const r = await api('/api/game/finish', {
+      method:'POST',
+      body: JSON.stringify({ game_run_id: currentGameRunId, score })
+    });
 
-    // Пэйаут за игру (по порогам): 10k+/50k+/100k+
-    if(currentGameRunId){
-      try{
-        if(finalReward) finalReward.textContent = 'Проверяем награду...';
-        const r = await api('/api/game/finish', {
-          method:'POST',
-          body: JSON.stringify({ game_run_id: currentGameRunId, score })
-        });
+    const rewardStr = (r.reward_ton_str ?? r.reward_ton ?? '').toString();
+    const hasReward = (r.reward_nano && BigInt(r.reward_nano) > 0n) || (Number(r.reward_ton) > 0);
 
-        const rewardStr = (r.reward_ton_str ?? r.reward_ton ?? '').toString();
-        if((r.reward_nano && BigInt(r.reward_nano) > 0n) || (Number(r.reward_ton) > 0)){
-          // Requested copy: show a "claim" style message when score >= 10,000
-          if(finalReward) finalReward.textContent = `Забрать выигрыш ${rewardStr} TON`;
-        }else{
-          if(finalReward) finalReward.textContent = 'Награды нет (нужно 10000+).';
-        }
-
-        currentGameRunId = '';
-        await refreshMe();
-      }catch(e){
-        const msg = e?.json?.error || e?.message || 'error';
-        if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
-      }
+    if(hasReward){
+      if(finalReward) finalReward.textContent = `На баланс зачислено ${rewardStr} TON ✅`;
+    }else{
+      if(finalReward) finalReward.textContent = 'Награды нет (нужно 10000+).';
     }
+
+    currentGameRunId = '';
+    await refreshMe();
+  }catch(e){
+    const msg = e?.json?.error || e?.message || 'error';
+    if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
   }
+}
+
+async function gameOver(kind='loss'){
+  gameActive = false;
+  finalScore.textContent = score;
+  if(finalReward) finalReward.textContent = '';
+  over.classList.add('show');
+
+  const overTitle = document.getElementById('overTitle');
+  const overHint = document.getElementById('overHint');
+
+  const isWin = kind === 'win';
+
+  // Continue is allowed only on loss ("слив")
+  if(btnContinue){
+    btnContinue.style.display = isWin ? 'none' : '';
+  }
+  if(overTitle) overTitle.textContent = isWin ? 'Победа!' : 'Игра окончена';
+  if(overHint) overHint.textContent = isWin
+    ? 'Порог 10000+ достигнут — игра завершена.'
+    : 'Новых ходов нет. Можно продолжить после слива.';
+
+  // On WIN — immediately finish run and credit reward.
+  // On LOSS — do NOT finish yet (so the player can continue for 0.5 TON).
+  if(isWin){
+    await finishRunAndCredit();
+  }
+}
   function reset(){
     for(let y=0;y<N;y++) for(let x=0;x<N;x++) grid[y][x]=null;
     score=0; combo=0;
@@ -1918,53 +1970,63 @@ refreshHistory();
     return Number.isFinite(n) ? n : 0;
   }
 
-  function resetToBet(){
-    reset();
-    gameActive = false;
-    over.classList.remove('show');
-    currentGameRunId = '';
-    if(finalReward) finalReward.textContent = '';
-    showBetPanel();
+  async function resetToBet(){
+  // If a run is pending (lost and user chose to stop), finish it on the server (no reward if < 10000)
+  if(!gameActive && currentGameRunId){
+    await finishRunAndCredit();
   }
 
-  // Start game with bet
-  btnStartGame?.addEventListener('click', async ()=>{
-    const v = START_BET;
-    // require wallet connection (future withdrawals go to connected address)
-    if(!tonAddress){
-      betHintEl && (betHintEl.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
-      return;
-    }
-    let bal = 0;
-    try{
-      bal = await getServerBalanceTon();
-      if(bal < v){
-        betHintEl && (betHintEl.textContent = `Недостаточно TON на балансе. Нужно: ${v}, доступно: ${bal}. Пополни баланс во вкладке «Баланс».`);
-        return;
+  reset();
+  gameActive = false;
+  over.classList.remove('show');
+  if(finalReward) finalReward.textContent = '';
+  showBetPanel();
+}
+
+  // Start game (free) — still requires wallet connection so rewards can be credited to your in-app balance.
+btnStartGame?.addEventListener('click', async ()=>{
+  const v = START_COST;
+
+  // require wallet connection (future withdrawals go to connected address)
+  if(!tonAddress){
+    betHintEl && (betHintEl.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).');
+    return;
+  }
+
+  try{
+    if(v > 0){
+        // If you ever set START_COST back to >0, the server will debit it in /api/game/start.
+        const bal = await getServerBalanceTon();
+        if(bal < v){
+          betHintEl && (betHintEl.textContent = `Недостаточно TON на балансе. Нужно: ${v}, доступно: ${bal}. Пополни баланс во вкладке «Баланс».`);
+          return;
+        }
       }
-      currentBet = v;
-      const spendRes = await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: currentBet, reason: 'game_start' })});
-      currentGameRunId = spendRes.game_run_id || '';
-      await refreshMe();
-    }catch(e){
-      const code = e?.json?.error || e?.message || 'error';
-      betHintEl && (betHintEl.textContent = `Ошибка: ${code}`);
-      return;
-    }
 
-    betHintEl && (betHintEl.textContent = '');
-    hideBetPanel();
-    gameActive = true;
-    reset();
-  });
+      // Always create a game run on the server (needed to credit reward on finish)
+    const startRes = await api('/api/game/start', { method:'POST', body: JSON.stringify({ bet_ton: v })});
+    currentGameRunId = startRes.game_run_id || '';
 
-  document.getElementById('btnNew').addEventListener('click', resetToBet);
-  document.getElementById('btnRestart').addEventListener('click', resetToBet);
+    await refreshMe();
+  }catch(e){
+    const code = e?.json?.error || e?.message || 'error';
+    betHintEl && (betHintEl.textContent = `Ошибка: ${code}`);
+    return;
+  }
+
+  betHintEl && (betHintEl.textContent = '');
+  hideBetPanel();
+  gameActive = true;
+  reset();
+});
+
+  document.getElementById('btnNew').addEventListener('click', ()=>resetToBet());
+  document.getElementById('btnRestart').addEventListener('click', ()=>resetToBet());
   btnContinue?.addEventListener('click', async ()=>{
     // Continue is available only after Game Over
     if(gameActive) return;
 
-    const cost = START_BET; // 0.5 TON
+    const cost = CONTINUE_COST; // 0.5 TON
 
     if(!tonAddress){
       if(finalReward) finalReward.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).';
@@ -1972,7 +2034,7 @@ refreshHistory();
     }
 
     try{
-      if(finalReward) finalReward.textContent = 'Списываем 0.5 TON...';
+      if(finalReward) finalReward.textContent = `Списываем ${cost} TON...`;
       const bal = await getServerBalanceTon();
       if(bal < cost){
         if(finalReward) finalReward.textContent = `Недостаточно TON на балансе. Нужно: ${cost}, доступно: ${bal}.`;

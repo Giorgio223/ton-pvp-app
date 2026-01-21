@@ -544,6 +544,57 @@ app.get('/api/admin/deposits', async (req, res) => {
 
 /* ---------------------- user spend/refund/game ---------------------- */
 
+// Game start — creates a game_run_id (used later for /api/game/finish reward crediting)
+// bet_ton can be 0 (free start). If bet_ton > 0 — we also debit from user's ledger here.
+app.post('/api/game/start', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const s = await getSession(req);
+    if (!s) throw new Error('no session');
+
+    const betAny = (req.body?.betTon ?? req.body?.bet_ton ?? 0);
+    const betNum = Number(betAny);
+    if (!Number.isFinite(betNum) || betNum < 0) throw new Error('bad bet');
+
+    const betNano = tonToNanoBig(betAny);
+
+    await client.query('BEGIN');
+
+    if (betNano > 0n) {
+      const balR = await client.query(
+        `SELECT COALESCE(SUM(delta_nano),0)::bigint AS bal FROM ledger WHERE address=$1`,
+        [s.address]
+      );
+      const bal = BigInt(balR.rows[0].bal);
+      if (bal < betNano) throw new Error('Недостаточно средств');
+
+      await client.query(
+        `INSERT INTO ledger(address, delta_nano, reason, ref, created_at)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [s.address, (-betNano).toString(), 'game_start', null, Date.now()]
+      );
+    }
+
+    const crypto = require('crypto');
+    const gameRunId = (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+
+    await client.query(
+      `INSERT INTO game_runs(id, address, bet_nano, status, started_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [gameRunId, s.address, betNano.toString(), 'started', Date.now()]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, game_run_id: gameRunId, bet_nano: betNano.toString() });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    jsonError(res, e);
+  } finally {
+    client.release();
+  }
+});
+
+
 // Spend (basic)
 app.post('/api/spend', async (req, res) => {
   const client = await pool.connect();
