@@ -275,6 +275,17 @@ app.post('/api/bonus/claim', async (req, res) => {
 
     await client.query('BEGIN');
 
+    if (why === 'game_continue') {
+      if (!gameRunId) throw new Error('no game_run_id');
+      const chk = await client.query(
+        'SELECT status FROM game_runs WHERE id=$1 AND address=$2',
+        [gameRunId, s.address]
+      );
+      if (chk.rowCount === 0) throw new Error('bad game_run_id');
+      if (chk.rows[0].status !== 'active') throw new Error('game already finished');
+    }
+
+
     const r = await client.query(
       `SELECT last_claim_at FROM bonus_claims WHERE address=$1 FOR UPDATE`,
       [s.address]
@@ -344,6 +355,17 @@ app.post('/api/referral/claim', async (req, res) => {
     if (!s) throw new Error('no session');
 
     await client.query('BEGIN');
+
+    if (why === 'game_continue') {
+      if (!gameRunId) throw new Error('no game_run_id');
+      const chk = await client.query(
+        'SELECT status FROM game_runs WHERE id=$1 AND address=$2',
+        [gameRunId, s.address]
+      );
+      if (chk.rowCount === 0) throw new Error('bad game_run_id');
+      if (chk.rows[0].status !== 'active') throw new Error('game already finished');
+    }
+
     const r = await client.query(
       `SELECT pending_nano FROM referral_balances WHERE address=$1 FOR UPDATE`,
       [s.address]
@@ -558,7 +580,21 @@ app.post('/api/spend', async (req, res) => {
     const refAny = (req.body?.ref ?? req.body?.game_run_id ?? null);
     const ref = refAny ? String(refAny) : null;
 
+    // Для game_continue возвращаем/используем существующий game_run_id
+    let gameRunId = ref ? String(ref) : null;
+
     await client.query('BEGIN');
+
+    if (why === 'game_continue') {
+      if (!gameRunId) throw new Error('no game_run_id');
+      const chk = await client.query(
+        'SELECT status FROM game_runs WHERE id=$1 AND address=$2',
+        [gameRunId, s.address]
+      );
+      if (chk.rowCount === 0) throw new Error('bad game_run_id');
+      if (chk.rows[0].status !== 'active') throw new Error('game already finished');
+    }
+
 
     const balR = await client.query(
       `SELECT COALESCE(SUM(delta_nano),0)::bigint AS bal FROM ledger WHERE address=$1`,
@@ -574,8 +610,7 @@ app.post('/api/spend', async (req, res) => {
     );
 
     
-    let gameRunId = null;
-    if (why === 'game_start') {
+        if (why === 'game_start') {
       gameRunId = crypto.randomBytes(16).toString('hex');
       await client.query(
         `INSERT INTO game_runs(id, address, bet_nano, status, started_at)
@@ -626,6 +661,17 @@ app.post('/api/game/finish', async (req, res) => {
     if (!Number.isFinite(sc) || sc < 0) throw new Error('bad score');
 
     await client.query('BEGIN');
+
+    if (why === 'game_continue') {
+      if (!gameRunId) throw new Error('no game_run_id');
+      const chk = await client.query(
+        'SELECT status FROM game_runs WHERE id=$1 AND address=$2',
+        [gameRunId, s.address]
+      );
+      if (chk.rowCount === 0) throw new Error('bad game_run_id');
+      if (chk.rows[0].status !== 'active') throw new Error('game already finished');
+    }
+
 
     const runR = await client.query(
       `SELECT * FROM game_runs WHERE id=$1 FOR UPDATE`,

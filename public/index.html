@@ -707,7 +707,7 @@ function setTonBtn(text, disabled=false){
   const btnStartGame = document.getElementById('btnStartGame');
   let currentBet = 0;
   let currentGameRunId = '';
-    clearSavedRun();
+
   const RUN_STORAGE_KEY = 'ton_pvp_run_state_v1';
 
   function saveRun(){
@@ -1390,19 +1390,21 @@ refreshHistory();
 
   // Hard pool: только «сложные» фигуры (после 28000+)
   // По твоему ТЗ: L / S / Z / T и похожие.
-  const HARD_SHAPES = [
-    SHAPES[8],  // L
-    SHAPES[9],  // L mirrored
-    SHAPES[10], // T
-    SHAPES[11], // T mirrored
-    SHAPES[12], // Z
-    SHAPES[13], // S
-  ];
-
-  function hardThresholdForScore(sc){
-    // Новый порог сложности: HARD после 28000 очков
-    return 28000;
-  }
+  // Medium pool: «неудобные» фигуры (1501–12000)
+// По твоему ТЗ: не совсем сложно, но и не легко.
+const MEDIUM_SHAPES = [
+  SHAPES[2],  // 3
+  SHAPES[3],  // 4 line
+  SHAPES[4],  // 2x3
+  SHAPES[5],  // 3x2
+  SHAPES[7],  // 1x3
+  SHAPES[8],  // L
+  SHAPES[9],  // L mirrored
+  SHAPES[10], // T
+  SHAPES[11], // T mirrored
+  SHAPES[12], // Z
+  SHAPES[13], // S
+];
 
   function newPiece(){
     // Сложность по счёту:
@@ -1410,15 +1412,15 @@ refreshHistory();
     // 1501–28000: нормальные
     // 28001+: сложные
     const EASY_MAX = 1500;
-    const hardAt = 28000;
+    const MEDIUM_MAX = 12000;
     const localScore = score;
     let pool;
     if(localScore <= EASY_MAX){
       pool = EASY_SHAPES;
-    }else if(localScore <= hardAt){
-      pool = SHAPES;
+    }else if(localScore <= MEDIUM_MAX){
+      pool = MEDIUM_SHAPES;
     }else{
-      pool = HARD_SHAPES;
+      pool = SHAPES;
     }
 
     const shape = pool[(Math.random()*pool.length)|0];
@@ -1930,12 +1932,77 @@ refreshHistory();
 
       await refreshMe();
 
-      // Даем новые фигуры, пока не появится хотя бы один ход (ограничиваем попытки)
-      let tries = 0;
-      do{
-        refillPieces(true); // force replace
-        tries++;
-      }while(!hasAnyMove() && tries < 25);
+      // После покупки продолжения даём «удобные» фигуры:
+      // гарантируем, что можно закрыть хотя бы одну линию (ряд или колонку).
+      function newPieceFromPool(pool){
+        const shape = pool[(Math.random()*pool.length)|0];
+        return {
+          shape,
+          cells: shape.cells,
+          w: shape.w,
+          h: shape.h,
+          color: palette[(Math.random()*palette.length)|0],
+        };
+      }
+      function wouldClearLineIfPlaced(piece,gx,gy){
+        // boolean-слой занятости
+        const occ = grid.map(r => r.map(v => !!v));
+        for(const c of piece.cells){
+          occ[gy + c.y][gx + c.x] = true;
+        }
+        // ряды
+        for(let y=0;y<N;y++){
+          let ok=true; for(let x=0;x<N;x++) if(!occ[y][x]){ ok=false; break; }
+          if(ok) return true;
+        }
+        // колонки
+        for(let x=0;x<N;x++){
+          let ok=true; for(let y=0;y<N;y++) if(!occ[y][x]){ ok=false; break; }
+          if(ok) return true;
+        }
+        return false;
+      }
+      function findContinuePieces(){
+        const MAX_TRIES = 2500;
+        for(let t=0;t<MAX_TRIES;t++){
+          const cand = [
+            newPieceFromPool(EASY_SHAPES),
+            newPieceFromPool(EASY_SHAPES),
+            newPieceFromPool(EASY_SHAPES),
+          ];
+          let canClear = false;
+          let hasMoveAny = false;
+          for(const p of cand){
+            for(let y=0;y<N;y++){
+              for(let x=0;x<N;x++){
+                if(canPlace(p,x,y)){
+                  hasMoveAny = true;
+                  if(wouldClearLineIfPlaced(p,x,y)){
+                    canClear = true;
+                    break;
+                  }
+                }
+              }
+              if(canClear) break;
+            }
+            if(canClear) break;
+          }
+          if(hasMoveAny && canClear) return cand;
+        }
+        return null;
+      }
+
+      const contPieces = findContinuePieces();
+      if(contPieces){
+        pieces = contPieces;
+      }else{
+        // fallback: просто выдаём фигуры, пока не появится хотя бы один ход
+        let tries = 0;
+        do{
+          refillPieces(true); // force replace
+          tries++;
+        }while(!hasAnyMove() && tries < 25);
+      }
 
       if(!hasAnyMove()){
         // крайний случай: освобождаем 1 клетку
