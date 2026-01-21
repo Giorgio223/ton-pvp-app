@@ -12,9 +12,14 @@ const bot = new Telegraf(BOT_TOKEN);
 
 bot.start(async (ctx) => {
   await ctx.reply(
-    "Привет! Запускай тетрис 👇",
+    "Привет! 👋\n\n"
+    + "🎮 Запускай тетрис\n"
+    + "💬 Заходи в чат / группу\n\n"
+    + "Жми кнопку 👇",
     Markup.inlineKeyboard([
-      Markup.button.webApp("🎮 Открыть игру", WEBAPP_URL),
+      [Markup.button.webApp("🎮 Открыть игру", WEBAPP_URL)],
+      [Markup.button.url("🎮 Игра в Telegram", "https://t.me/tetristongame")],
+      [Markup.button.url("💬 Чат / Группа", "https://t.me/+-_ITbXQF35g1YWQ0")]
     ])
   );
 });
