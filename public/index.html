@@ -743,7 +743,18 @@ function setTonBtn(text, disabled=false){
       score = Number(st.score)||0;
       if(Array.isArray(st.grid)) grid = st.grid;
       if(Array.isArray(st.pieces)) pieces = st.pieces;
-      updateScore();
+      
+      // Санитизация после localStorage: иногда могут быть пустые/битые слоты.
+      if(Array.isArray(pieces)){
+        pieces = pieces.map(p=>{
+          if(!p) return null;
+          // поддержка старого формата, если вдруг сохранили shape вместо cells
+          if(!p.cells && Array.isArray(p.shape)) return { ...p, cells: normalize(p.shape) };
+          if(!Array.isArray(p.cells)) return null;
+          return p;
+        });
+      }
+updateScore();
       // если есть хоть один ход — продолжаем/показываем оверлей; иначе оверлей (можно продолжить/закончить)
       const hasMoveNow = hasAnyMove();
       if(hasMoveNow){
@@ -1937,11 +1948,9 @@ const MEDIUM_SHAPES = [
       function newPieceFromPool(pool){
         const shape = pool[(Math.random()*pool.length)|0];
         return {
-          shape,
-          cells: shape.cells,
-          w: shape.w,
-          h: shape.h,
+          cells: normalize(shape),
           color: palette[(Math.random()*palette.length)|0],
+          id: Math.random().toString(36).slice(2)
         };
       }
       function wouldClearLineIfPlaced(piece,gx,gy){
