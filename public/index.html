@@ -568,10 +568,8 @@
         <h1>Игра окончена</h1>
         <p>Счёт: <b id="finalScore">0</b></p>
         <p id="finalReward" style="opacity:.9"></p>
-        <p style="opacity:.85" id="overReason">Новых ходов нет.</p>
-        <p id="continueHint" style="opacity:.85; display:none; margin-top:10px"></p>
+        <p style="opacity:.85">Новых ходов нет.</p>
         <div class="row">
-          <button class="primary" id="btnContinue" style="display:none">Продолжить за 0.5 TON</button>
           <button class="primary" id="btnRestart">Заново</button>
           <button id="btnClose">Закрыть</button>
         </div>
@@ -790,12 +788,6 @@ window.addEventListener('resize', ()=>{ layout(); });
   const over = document.getElementById('over');
   const finalScore = document.getElementById('finalScore');
   const finalReward = document.getElementById('finalReward');
-  const overReason = document.getElementById('overReason');
-  const btnContinue = document.getElementById('btnContinue');
-  const continueHint = document.getElementById('continueHint');
-
-  // режим оверлея: finished | continueOffer
-  let overMode = 'finished';
 
 // ===== Balance UI (mock)
 const btnBalance = document.getElementById('btnBalance');
@@ -1776,7 +1768,7 @@ refreshHistory();
       if (pieces.every(p => p === null)) refillPieces();
 
       // После хода проверяем, остались ли ходы для ТЕКУЩИХ фигур.
-      if (!hasAnyMove()) outOfMoves();
+      if (!hasAnyMove()) gameOver();
     }
     dragging=null;
   }
@@ -1814,108 +1806,10 @@ refreshHistory();
   function updateScore(){
     elScore.textContent = score;
   }
-  function anyEmptyCells(){
-    for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(!grid[y][x]) return true;
-    return false;
-  }
-
-  // Спец-«спасательные» фигуры: первые 3 после продолжения.
-  // 1) Первая всегда гарантирует закрытие хотя бы одной линии (ряд/колонка),
-  //    потому что состоит ровно из пустых клеток выбранной почти-собранной линии.
-  // 2) Две следующих — максимально удобные (простые и гарантированно ставятся).
-  function makeLineClosePiece(){
-    // ищем линию (ряд/колонка) с минимальным количеством пустых клеток (>0)
-    let best = null;
-
-    for(let y=0;y<N;y++){
-      const empties = [];
-      for(let x=0;x<N;x++) if(!grid[y][x]) empties.push({x,y});
-      if(!empties.length) continue;
-      if(!best || empties.length < best.empties.length){
-        best = { kind:'row', idx:y, empties };
-      }
-    }
-    for(let x=0;x<N;x++){
-      const empties = [];
-      for(let y=0;y<N;y++) if(!grid[y][x]) empties.push({x,y});
-      if(!empties.length) continue;
-      if(!best || empties.length < best.empties.length){
-        best = { kind:'col', idx:x, empties };
-      }
-    }
-
-    if(!best) return null;
-
-    // формируем клетки фигуры так, чтобы она ставилась ровно на эту линию
-    if(best.kind === 'row'){
-      const xs = best.empties.map(e=>e.x);
-      const minX = Math.min(...xs);
-      const cells = best.empties.map(e=>({x:e.x-minX,y:0}));
-      return {
-        cells,
-        color: '#35f2ff',
-        id: 'rescue_row_' + Math.random().toString(36).slice(2),
-        hint: { gx:minX, gy:best.idx }
-      };
-    }else{
-      const ys = best.empties.map(e=>e.y);
-      const minY = Math.min(...ys);
-      const cells = best.empties.map(e=>({x:0,y:e.y-minY}));
-      return {
-        cells,
-        color: '#ff3df2',
-        id: 'rescue_col_' + Math.random().toString(36).slice(2),
-        hint: { gx:best.idx, gy:minY }
-      };
-    }
-  }
-
-  function findAnyPlaceablePieceFromPool(pool, maxTries=80){
-    for(let t=0;t<maxTries;t++){
-      const shape = pool[(Math.random()*pool.length)|0];
-      const p = { cells: normalize(shape), color: palette[(Math.random()*palette.length)|0], id: Math.random().toString(36).slice(2) };
-      for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(canPlace(p,x,y)) return p;
-    }
-    // если вдруг не нашли — вернём одиночку (если хоть где-то пусто)
-    const p = { cells: normalize(SHAPES[0]), color: palette[(Math.random()*palette.length)|0], id: Math.random().toString(36).slice(2) };
-    for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(canPlace(p,x,y)) return p;
-    return null;
-  }
-
-  function setRescuePieces(){
-    const p1 = makeLineClosePiece();
-    // Если по какой-то причине нельзя продолжить (нет пустых), вернём обычные.
-    if(!p1){
-      refillPieces();
-      return;
-    }
-
-    // проверим, что первая реально ставится там, где рассчитали
-    if(!canPlace(p1, p1.hint.gx, p1.hint.gy)){
-      // fallback: обычные простые фигуры, но всё равно максимально удобные
-      pieces = [
-        findAnyPlaceablePieceFromPool(EASY_SHAPES),
-        findAnyPlaceablePieceFromPool(EASY_SHAPES),
-        findAnyPlaceablePieceFromPool(EASY_SHAPES)
-      ].filter(Boolean);
-      while(pieces.length<3) pieces.push(newPiece());
-      return;
-    }
-
-    const p2 = findAnyPlaceablePieceFromPool(EASY_SHAPES) || newPiece();
-    const p3 = findAnyPlaceablePieceFromPool(EASY_SHAPES) || newPiece();
-    pieces = [p1, p2, p3];
-  }
-
-  async function finishGameAndShowOver(){
-    overMode = 'finished';
+  async function gameOver(){
     gameActive = false;
     finalScore.textContent = score;
     if(finalReward) finalReward.textContent = '';
-    if(overReason) overReason.textContent = 'Новых ходов нет.';
-    try{ document.getElementById('btnRestart')?.textContent = 'Заново'; }catch(_){ }
-    if(continueHint){ continueHint.style.display = 'none'; continueHint.textContent=''; }
-    if(btnContinue) btnContinue.style.display = 'none';
     over.classList.add('show');
 
     // Пэйаут за игру (по порогам): 30k+/50k+/100k+
@@ -1940,39 +1834,6 @@ refreshHistory();
         if(finalReward) finalReward.textContent = `Награда: ошибка (${msg})`;
       }
     }
-  }
-
-  async function gameOver(){
-    // Старый интерфейс оставляем как фолбек
-    return finishGameAndShowOver();
-  }
-
-  async function outOfMoves(){
-    overMode = 'continueOffer';
-    // Если поле вообще без пустых клеток — продолжать нечем.
-    if(!anyEmptyCells()){
-      return finishGameAndShowOver();
-    }
-
-    gameActive = false;
-    finalScore.textContent = score;
-    if(finalReward) finalReward.textContent = '';
-    if(overReason) overReason.textContent = 'Ходов больше нет. Можно продолжить за 0.5 TON.';
-    try{ document.getElementById('btnRestart')?.textContent = 'Закончить'; }catch(_){ }
-
-    if(continueHint){
-      continueHint.style.display = 'block';
-      continueHint.textContent = '';
-    }
-
-    // показываем кнопку продолжения, если вообще можем списать средства
-    if(btnContinue){
-      btnContinue.style.display = 'inline-block';
-      btnContinue.disabled = false;
-      btnContinue.style.opacity = 1;
-    }
-
-    over.classList.add('show');
   }
   function reset(){
     for(let y=0;y<N;y++) for(let x=0;x<N;x++) grid[y][x]=null;
@@ -2043,53 +1904,8 @@ refreshHistory();
   });
 
   document.getElementById('btnNew').addEventListener('click', resetToBet);
-  document.getElementById('btnRestart').addEventListener('click', ()=>{
-    if(overMode === 'continueOffer'){
-      // отказ от продолжения — завершаем игру с начислением (если есть game_run_id)
-      finishGameAndShowOver();
-      return;
-    }
-    resetToBet();
-  });
-  btnContinue?.addEventListener('click', async ()=>{
-    // списываем 0.5 TON и выдаём 3 максимально удобные фигуры
-    if(!btnContinue) return;
-    btnContinue.disabled = true;
-    btnContinue.style.opacity = .75;
-    if(continueHint){ continueHint.style.display='block'; continueHint.textContent='Списываем 0.5 TON...'; }
-
-    try{
-      await ensureSession();
-      await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: 0.5, reason: 'continue' }) });
-      await refreshMe();
-
-      // даём «спасательные» фигуры
-      setRescuePieces();
-
-      overMode = 'finished';
-      try{ document.getElementById('btnRestart')?.textContent = 'Заново'; }catch(_){ }
-
-      // закрываем оверлей и продолжаем
-      over.classList.remove('show');
-      if(continueHint){ continueHint.style.display='none'; continueHint.textContent=''; }
-      if(btnContinue){ btnContinue.style.display='none'; btnContinue.disabled=false; btnContinue.style.opacity=1; }
-
-      gameActive = true;
-    }catch(e){
-      const msg = e?.json?.error || e?.message || 'error';
-      if(continueHint){ continueHint.style.display='block'; continueHint.textContent = `Не удалось продолжить: ${msg}`; }
-      btnContinue.disabled = false;
-      btnContinue.style.opacity = 1;
-    }
-  });
-  document.getElementById('btnClose').addEventListener('click', ()=>{
-    if(overMode === 'continueOffer'){
-      // "Закрыть" = закончить игру (с начислением награды, если положена)
-      finishGameAndShowOver();
-    }else{
-      over.classList.remove('show');
-    }
-  });
+  document.getElementById('btnRestart').addEventListener('click', resetToBet);
+  document.getElementById('btnClose').addEventListener('click', ()=>over.classList.remove('show'));
 
   // ===== Seed: a few blocks
   // so it doesn't look empty (optional)
