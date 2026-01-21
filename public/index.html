@@ -1874,8 +1874,10 @@ refreshHistory();
           body: JSON.stringify({ game_run_id: currentGameRunId, score })
         });
 
-        if(r.multiplier > 0){
-          if(finalReward) finalReward.textContent = `Награда: +${r.reward_ton} TON (x${r.multiplier})`;
+        const rewardStr = (r.reward_ton_str ?? r.reward_ton ?? '').toString();
+        if((r.reward_nano && BigInt(r.reward_nano) > 0n) || (Number(r.reward_ton) > 0)){
+          // Requested copy: show a "claim" style message when score >= 10,000
+          if(finalReward) finalReward.textContent = `Забрать выигрыш ${rewardStr} TON`;
         }else{
           if(finalReward) finalReward.textContent = 'Награды нет (нужно 10000+).';
         }

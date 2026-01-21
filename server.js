@@ -39,6 +39,11 @@ const TETRIS_M1 = Number(process.env.TETRIS_M1 || '5');
 const TETRIS_M2 = Number(process.env.TETRIS_M2 || '50');
 const TETRIS_M3 = Number(process.env.TETRIS_M3 || '100');
 
+// Fixed reward mode (UI expects "забрать выигрыш 2.5 TON" when score >= 10000)
+// You can override via env if needed.
+const TETRIS_FIXED_REWARD_TON = (process.env.TETRIS_FIXED_REWARD_TON || '2.5').toString();
+const TETRIS_FIXED_REWARD_NANO = tonToNanoBig(TETRIS_FIXED_REWARD_TON);
+
 if (!TREASURY_ADDRESS) {
   console.error('[server] TREASURY_ADDRESS missing in .env');
   process.exit(1);
@@ -623,22 +628,23 @@ app.post('/api/game/finish', async (req, res) => {
 
     if (run.status === 'finished') {
       await client.query('COMMIT');
+      const rewardTonStr = run.reward_nano ? nanoToTonStr(run.reward_nano) : '0';
       return res.json({
         ok: true,
         multiplier: 0,
-        reward_ton: run.reward_nano ? Number(nanoToTonStr(run.reward_nano)) : 0,
+        reward_ton: run.reward_nano ? Number(rewardTonStr) : 0,
+        reward_ton_str: rewardTonStr,
         reward_nano: String(run.reward_nano || 0),
         score: run.score ?? sc
       });
     }
 
-    let multiplier = 0;
-    if (sc >= TETRIS_T3) multiplier = TETRIS_M3;
-    else if (sc >= TETRIS_T2) multiplier = TETRIS_M2;
-    else if (sc >= TETRIS_T1) multiplier = TETRIS_M1;
-
+    // Fixed reward logic (requested):
+    // If score >= TETRIS_T1 (default 10,000) — credit a fixed 2.5 TON to the player's balance.
+    // Otherwise — no reward.
     const betNano = BigInt(run.bet_nano);
-    const rewardNano = multiplier > 0 ? betNano * BigInt(multiplier) : 0n;
+    const rewardNano = sc >= TETRIS_T1 ? TETRIS_FIXED_REWARD_NANO : 0n;
+    const multiplier = rewardNano > 0n ? 1 : 0;
 
     await client.query(
       `UPDATE game_runs
@@ -686,6 +692,7 @@ app.post('/api/game/finish', async (req, res) => {
       ok: true,
       multiplier,
       reward_ton: rewardNano > 0n ? Number(nanoToTonStr(rewardNano)) : 0,
+      reward_ton_str: rewardNano > 0n ? nanoToTonStr(rewardNano) : '0',
       reward_nano: rewardNano.toString(),
       score: sc
     });
