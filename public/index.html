@@ -55,6 +55,7 @@
       text-shadow:0 10px 22px rgba(0,0,0,.55);
       font-weight:900;
       letter-spacing:.4px;
+      z-index:950;
     }
     .pill{
       pointer-events:auto;
@@ -420,11 +421,17 @@
       opacity:.75;
       line-height:1.25;
     }
+    .freePrice{ color:#fff; }
 
   /* Promo banner */
 .promoBanner{
+  position:absolute;
+  left:50%;
+  transform:translateX(-50%);
+  top: calc(max(12px, env(safe-area-inset-top)) + 54px); /* ниже HUD */
+  z-index: 800; /* ниже HUD, чтобы не перекрывать счёт */
+  pointer-events:none;
   color:#fff;
-  margin: 10px auto 0;
   width: min(720px, calc(100% - 28px));
   text-align:center;
   font-weight: 950;
@@ -440,6 +447,8 @@
 .promoBanner b{ font-size: 26px; }
 @media (max-width:520px){
   .promoBanner{ font-size:18px; }
+  .promoBanner b{ font-size:22px; }
+}
   .promoBanner b{ font-size:22px; }
 }
 
@@ -488,7 +497,7 @@
       <div class="betRow">
         <div class="betField" style="flex:1 1 260px">
           <span>Стоимость запуска</span>
-          <div style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">Бесплатно</div>
+          <div class="freePrice" style="height:42px;display:flex;align-items:center;padding:0 12px;border-radius:14px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);font-weight:950;">Бесплатно</div>
         </div>
         <button class="betStart" id="btnStartGame" type="button">Запустить игру</button>
       </div>
