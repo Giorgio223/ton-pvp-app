@@ -48,7 +48,6 @@
       -webkit-tap-highlight-color: transparent;
     }
     .hud{
-  z-index: 1000;
       position:absolute; left:14px; right:14px; top:max(12px, env(safe-area-inset-top));
       display:flex; align-items:center; justify-content:space-between;
       pointer-events:none;
@@ -423,21 +422,15 @@
     }
 
   /* Promo banner */
-/* Promo banner ABOVE HUD */
 .promoBanner{
-  position:fixed;
-  left:50%;
-  transform:translateX(-50%);
-  top: 8px;                 /* ВЫШЕ HUD */
-  z-index: 1200;            /* выше HUD */
-  pointer-events:none;
   color:#fff;
+  margin: 10px auto 0;
   width: min(720px, calc(100% - 28px));
   text-align:center;
   font-weight: 950;
-  font-size: 20px;
+  font-size: 22px;
   letter-spacing: .3px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 18px;
   background: linear-gradient(135deg, rgba(255,72,208,.18), rgba(85,107,255,.18));
   border: 1px solid rgba(255,255,255,.16);
@@ -446,27 +439,7 @@
 }
 .promoBanner b{ font-size: 26px; }
 @media (max-width:520px){
-  /* Promo banner ABOVE HUD */
-.promoBanner{
-  position:fixed;
-  left:50%;
-  transform:translateX(-50%);
-  top: 8px;                 /* ВЫШЕ HUD */
-  z-index: 1200;            /* выше HUD */
-  pointer-events:none;
-  color:#fff;
-  width: min(720px, calc(100% - 28px));
-  text-align:center;
-  font-weight: 950;
-  font-size: 20px;
-  letter-spacing: .3px;
-  padding: 8px 12px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(255,72,208,.18), rgba(85,107,255,.18));
-  border: 1px solid rgba(255,255,255,.16);
-  box-shadow: 0 16px 45px rgba(0,0,0,.35);
-  backdrop-filter: blur(10px);
-}
+  .promoBanner{ font-size:18px; }
   .promoBanner b{ font-size:22px; }
 }
 
@@ -758,7 +731,10 @@ function setTonBtn(text, disabled=false){
   const WIN_THRESHOLD = 10000;
   const betHintEl = document.getElementById('betHint');
   const btnStartGame = document.getElementById('btnStartGame');
-  let currentBet = 0;
+  
+  const promoBannerEl = document.querySelector('.promoBanner');
+  const setPromoBannerVisible = (v)=>{ if(!promoBannerEl) return; promoBannerEl.style.display = v ? '' : 'none'; };
+let currentBet = 0;
   let currentGameRunId = '';
 
   const N = 8;
@@ -961,7 +937,8 @@ async function refreshBonusAndRef(){
 
   try{
     await ensureSession();
-  }catch(e){
+   }catch(e){
+    setPromoBannerVisible(true);
     // session errors shouldn't break UI
   }
 
@@ -1972,6 +1949,7 @@ async function gameOver(kind='loss'){
   finalScore.textContent = score;
   if(finalReward) finalReward.textContent = '';
   over.classList.add('show');
+  setPromoBannerVisible(true);
 
   const overTitle = document.getElementById('overTitle');
   const overHint = document.getElementById('overHint');
@@ -2004,6 +1982,7 @@ async function gameOver(kind='loss'){
 
   
   function showBetPanel(){
+    setPromoBannerVisible(true);
     betPanel?.classList.add('show');
     betPanel?.setAttribute('aria-hidden','false');
     currentBet = 0;
@@ -2036,6 +2015,7 @@ async function gameOver(kind='loss'){
 
   // Start game (free) — still requires wallet connection so rewards can be credited to your in-app balance.
 btnStartGame?.addEventListener('click', async ()=>{
+  setPromoBannerVisible(false);
   const v = START_COST;
 
   // Wallet is OPTIONAL for free start.
