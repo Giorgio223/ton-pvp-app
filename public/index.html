@@ -570,6 +570,7 @@
         <p id="finalReward" style="opacity:.9"></p>
         <p style="opacity:.85">Новых ходов нет.</p>
         <div class="row">
+          <button class="primary" id="btnContinue" title="Продолжить игру за 0.5 TON">Продолжить за 0.5 TON</button>
           <button class="primary" id="btnRestart">Заново</button>
           <button id="btnClose">Закрыть</button>
         </div>
@@ -788,6 +789,7 @@ window.addEventListener('resize', ()=>{ layout(); });
   const over = document.getElementById('over');
   const finalScore = document.getElementById('finalScore');
   const finalReward = document.getElementById('finalReward');
+  const btnContinue = document.getElementById('btnContinue');
 
 // ===== Balance UI (mock)
 const btnBalance = document.getElementById('btnBalance');
@@ -1806,13 +1808,64 @@ refreshHistory();
   function updateScore(){
     elScore.textContent = score;
   }
+
+  // Подбор максимально удобных фигур для "Продолжить".
+  // Идея: даём самые простые фигуры, но только те, которые ТОЧНО можно поставить
+  // на текущем поле (иначе продолжение бессмысленно).
+  function makeHelpfulContinuePieces(){
+    const preferred = [
+      SHAPES[0], // 1
+      SHAPES[1], // 2
+      SHAPES[6], // 2x2
+      SHAPES[2], // 3
+      SHAPES[4], // 3 vertical
+      SHAPES[3], // 4
+      SHAPES[5], // 4 vertical
+    ];
+
+    function canPlaceShape(shape){
+      const p = { cells: normalize(shape), color: palette[0], id: 'tmp' };
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(canPlace(p,x,y)) return true;
+      return false;
+    }
+
+    const out = [];
+    for(let i=0;i<3;i++){
+      let picked = null;
+      for(const sh of preferred){
+        if(canPlaceShape(sh)) { picked = sh; break; }
+      }
+
+      // Если вдруг на поле вообще нет места даже под 1 блок (поле заполнено),
+      // освобождаем немного клеток и продолжаем.
+      if(!picked){
+        const filled=[];
+        for(let y=0;y<N;y++) for(let x=0;x<N;x++) if(grid[y][x]) filled.push({x,y});
+        for(let k=0;k<3 && filled.length;k++){
+          const j=(Math.random()*filled.length)|0;
+          const cell = filled.splice(j,1)[0];
+          grid[cell.y][cell.x] = null;
+        }
+        picked = SHAPES[0];
+      }
+
+      // Создаём реальный piece
+      out.push({
+        cells: normalize(picked),
+        color: palette[(Math.random()*palette.length)|0],
+        id: Math.random().toString(36).slice(2)
+      });
+    }
+    return out;
+  }
+
   async function gameOver(){
     gameActive = false;
     finalScore.textContent = score;
     if(finalReward) finalReward.textContent = '';
     over.classList.add('show');
 
-    // Пэйаут за игру (по порогам): 30k+/50k+/100k+
+    // Пэйаут за игру (по порогам): 10k+/50k+/100k+
     if(currentGameRunId){
       try{
         if(finalReward) finalReward.textContent = 'Проверяем награду...';
@@ -1824,7 +1877,7 @@ refreshHistory();
         if(r.multiplier > 0){
           if(finalReward) finalReward.textContent = `Награда: +${r.reward_ton} TON (x${r.multiplier})`;
         }else{
-          if(finalReward) finalReward.textContent = 'Награды нет (нужно 30000+).';
+          if(finalReward) finalReward.textContent = 'Награды нет (нужно 10000+).';
         }
 
         currentGameRunId = '';
@@ -1905,6 +1958,43 @@ refreshHistory();
 
   document.getElementById('btnNew').addEventListener('click', resetToBet);
   document.getElementById('btnRestart').addEventListener('click', resetToBet);
+  btnContinue?.addEventListener('click', async ()=>{
+    // Continue is available only after Game Over
+    if(gameActive) return;
+
+    const cost = START_BET; // 0.5 TON
+
+    if(!tonAddress){
+      if(finalReward) finalReward.textContent = 'Сначала подключи кошелёк (Ton Connect Wallet).';
+      return;
+    }
+
+    try{
+      if(finalReward) finalReward.textContent = 'Списываем 0.5 TON...';
+      const bal = await getServerBalanceTon();
+      if(bal < cost){
+        if(finalReward) finalReward.textContent = `Недостаточно TON на балансе. Нужно: ${cost}, доступно: ${bal}.`;
+        return;
+      }
+
+      await api('/api/spend', { method:'POST', body: JSON.stringify({ amount_ton: cost, reason: 'continue' })});
+      await refreshMe();
+
+      // Даём максимально удобные первые 3 фигуры и продолжаем с текущим полем/счётом
+      pieces = makeHelpfulContinuePieces();
+      if(!hasAnyMove()){
+        // Фолбэк: на всякий случай — обычная тройка.
+        refillPieces();
+      }
+
+      over.classList.remove('show');
+      gameActive = true;
+      dragging = null;
+    }catch(e){
+      const msg = e?.json?.error || e?.message || 'error';
+      if(finalReward) finalReward.textContent = `Не удалось продолжить: ${msg}`;
+    }
+  });
   document.getElementById('btnClose').addEventListener('click', ()=>over.classList.remove('show'));
 
   // ===== Seed: a few blocks

@@ -30,7 +30,9 @@ const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || '').trim();
 const MIN_DEPOSIT_TON = Number(process.env.MIN_DEPOSIT_TON || '0.1');
 
 const GAME_ENTRY_TON = Number(process.env.GAME_ENTRY_TON || '0.5');
-const TETRIS_T1 = Number(process.env.TETRIS_T1 || '25000');
+// Payout thresholds (score)
+// x5 reward starts from 10,000 (was 25,000)
+const TETRIS_T1 = Number(process.env.TETRIS_T1 || '10000');
 const TETRIS_T2 = Number(process.env.TETRIS_T2 || '50000');
 const TETRIS_T3 = Number(process.env.TETRIS_T3 || '100000');
 const TETRIS_M1 = Number(process.env.TETRIS_M1 || '5');
