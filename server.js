@@ -162,6 +162,51 @@ app.post('/api/session', async (req, res) => {
 
     const now = Date.now();
 
+    // If the client already has a guest session, migrate its internal balance to the real wallet session
+    const guestToken = (req.body?.guest_token || req.headers['x-guest-token'] || '').toString();
+    if (guestToken) {
+      try {
+        const gs = await dbGetSession(guestToken);
+        if (gs?.address && String(gs.address).startsWith('guest:')) {
+          const guestAddr = String(gs.address);
+          const guestBal = await getBalanceNano(guestAddr);
+          if (guestBal > 0n) {
+            await addLedger(address, guestBal, 'migrate_from_guest');
+            await addLedger(guestAddr, -guestBal, 'migrate_to_wallet');
+          }
+          // Drop guest session token to avoid re-using it
+          await pool.query('DELETE FROM sessions WHERE token=$1', [guestToken]);
+        }
+    
+
+// Create guest session (for free play without wallet connection)
+// NOTE: guest address has prefix "guest:" and can later be migrated to a real wallet via /api/session (guest_token)
+app.post('/api/guest-session', async (req, res) => {
+  try {
+    const guestAddress = 'guest:' + crypto.randomUUID();
+    await ensureUser(guestAddress);
+
+    const now = Date.now();
+    const token = genId('g_');
+
+    await pool.query(
+      `INSERT INTO sessions(token,address,created_at,last_seen)
+       VALUES ($1,$2,$3,$4)`,
+      [token, guestAddress, now, now]
+    );
+
+    res.json({ ok: true, token, address: guestAddress, guest: true });
+  } catch (e) {
+    jsonError(res, e);
+  }
+});
+
+  } catch (e) {
+        // ignore migrate errors
+      }
+    }
+
+
     // Attach referral on first session creation (only once)
     const ref = (req.body?.ref || req.query?.ref || "").toString().trim();
     if (ref && ref !== address) {
@@ -549,14 +594,32 @@ app.get('/api/admin/deposits', async (req, res) => {
 app.post('/api/game/start', async (req, res) => {
   const client = await pool.connect();
   try {
-    const s = await getSession(req);
-    if (!s) throw new Error('no session');
-
     const betAny = (req.body?.betTon ?? req.body?.bet_ton ?? 0);
     const betNum = Number(betAny);
     if (!Number.isFinite(betNum) || betNum < 0) throw new Error('bad bet');
 
     const betNano = tonToNanoBig(betAny);
+
+    let s = await getSession(req);
+    let issuedToken = '';
+    if (!s) {
+      // Allow free start without wallet: create a guest session automatically when bet is 0
+      if (betNano > 0n) throw new Error('no session');
+
+      const guestAddress = 'guest:' + crypto.randomUUID();
+      await ensureUser(guestAddress);
+
+      const now = Date.now();
+      issuedToken = genId('g_');
+
+      await client.query(
+        `INSERT INTO sessions(token,address,created_at,last_seen)
+         VALUES ($1,$2,$3,$4)`,
+        [issuedToken, guestAddress, now, now]
+      );
+
+      s = { token: issuedToken, address: guestAddress };
+    }
 
     await client.query('BEGIN');
 
@@ -585,7 +648,9 @@ app.post('/api/game/start', async (req, res) => {
     );
 
     await client.query('COMMIT');
-    res.json({ ok: true, game_run_id: gameRunId, bet_nano: betNano.toString() });
+    const out = { ok: true, game_run_id: gameRunId, bet_nano: betNano.toString() };
+    if (issuedToken) out.token = issuedToken;
+    res.json(out);
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     jsonError(res, e);

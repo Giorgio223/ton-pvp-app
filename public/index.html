@@ -423,6 +423,7 @@
 
   /* Promo banner */
 .promoBanner{
+  color:#fff;
   margin: 10px auto 0;
   width: min(720px, calc(100% - 28px));
   text-align:center;
@@ -491,8 +492,7 @@
         </div>
         <button class="betStart" id="btnStartGame" type="button">Запустить игру</button>
       </div>
-      <div class="betHint" style="opacity:.95">Продолжение после слива: <b>0.5 TON</b></div>
-      <div class="betHint" id="betHint"></div>
+            <div class="betHint" id="betHint"></div>
     </div>
 <!-- Balance Modal -->
     <div class="balOverlay" id="balOverlay" aria-hidden="true">
@@ -1132,17 +1132,41 @@ async function refreshHistory(){
 
 async function ensureSession(){
   if(!tonAddress) throw new Error('wallet_not_connected');
-  if(sessionToken) return;
+
+  const isGuest = (localStorage.getItem('is_guest') === '1');
+
+  // If we already have a real wallet session — nothing to do
+  if(sessionToken && !isGuest) return;
+
+  const body = { address: tonAddress, ref: refParam };
+  if(sessionToken && isGuest) body.guest_token = sessionToken;
+
   const s = await fetch('/api/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: tonAddress, ref: refParam })
+    body: JSON.stringify(body)
   }).then(r=>r.json());
   if(!s.ok) throw new Error(s.error||'session_failed');
+
   sessionToken = s.token;
   localStorage.setItem('session_token', sessionToken);
+  localStorage.removeItem('is_guest');
 }
 
+
+
+async function ensureGuestSession(){
+  if(sessionToken) return;
+  const s = await fetch('/api/guest-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(r=>r.json());
+  if(!s.ok) throw new Error(s.error||'guest_session_failed');
+  sessionToken = s.token;
+  localStorage.setItem('session_token', sessionToken);
+  localStorage.setItem('is_guest', '1');
+}
 // When wallet connects/disconnects — create/clear session and refresh balance
 const __oldOnStatusChange = tonConnectUI?.onStatusChange;
 // (мы уже подписались выше; просто добавляем ещё действия ниже)
@@ -2004,7 +2028,18 @@ btnStartGame?.addEventListener('click', async ()=>{
       }
 
       // Always create a game run on the server (needed to credit reward on finish)
+    // Ensure we have at least a guest session so /api/game/start won't fail
+    await ensureGuestSession();
+
     const startRes = await api('/api/game/start', { method:'POST', body: JSON.stringify({ bet_ton: v })});
+
+    // If server issued a guest token (free start without wallet), store it
+    if(startRes.token && !sessionToken){
+      sessionToken = startRes.token;
+      localStorage.setItem('session_token', sessionToken);
+      localStorage.setItem('is_guest','1');
+    }
+
     currentGameRunId = startRes.game_run_id || '';
 
     await refreshMe();
